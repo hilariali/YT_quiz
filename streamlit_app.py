@@ -1,6 +1,5 @@
 import streamlit as st
-# Avoid watch errors in hosted envs
-st.set_option('server.fileWatcherType', 'none')
+# Note: fileWatcherType must be set via config.toml or CLI, not in code
 
 import re
 import subprocess
