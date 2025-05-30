@@ -13,13 +13,17 @@ A Streamlit app that takes a YouTube video URL, fetches its transcript, summariz
    ```bash
    pip install -r requirements.txt
    ```
-3. **Configure your OpenAI key**
-   - Create a file named `.streamlit/secrets.toml` with:
+3. **Configure Streamlit settings**
+   - Create `.streamlit/config.toml` with:
      ```toml
-     ["OPENAI_API_KEY"]
-     value = "YOUR_OPENAI_API_KEY"
+     [server]
+     fileWatcherType = "none"
      ```
-4. **Run locally**
+4. **Set OpenAI secrets**
+   - In Streamlit Cloud secrets, add:
+     - `OPENAI_API_KEY`
+     - `OPENAI_BASE_URL`
+5. **Deploy or run locally**
    ```bash
    streamlit run streamlit_app.py
    ```

@@ -39,7 +39,6 @@ def list_transcript_languages(video_id: str) -> dict:
         return {}
     return {t.language_code: ('auto' if t.is_generated else 'manual') for t in transcripts}
 
-
 def fetch_transcript(video_id: str, lang: str) -> str:
     """
     Fetch transcript text safely, returning empty on any failure.
@@ -50,14 +49,12 @@ def fetch_transcript(video_id: str, lang: str) -> str:
         return ''
     if not entries:
         return ''
-    # Join transcript lines
     try:
         return '\n'.join(item.get('text', '') for item in entries)
     except Exception:
         return ''
 
 # Summarization and quiz generation using Meta-Llama
-
 def summarize_chunk(text: str, lang: str) -> str:
     prompt = f"Please summarize the following transcript chunk in {lang}:\n\n{text}"
     try:
@@ -70,7 +67,6 @@ def summarize_chunk(text: str, lang: str) -> str:
         st.error(f"Summarization error: {e}")
         return ''
 
-
 def summarize_transcript(transcript: str, lang: str) -> str:
     if len(transcript) <= CHUNK_SIZE:
         return summarize_chunk(transcript, lang)
@@ -80,7 +76,6 @@ def summarize_transcript(transcript: str, lang: str) -> str:
         parts.append(summarize_chunk(chunk, lang))
     combined = '\n'.join(parts)
     return summarize_chunk(combined, lang)
-
 
 def generate_quiz(summary: str, lang: str, grade: str, num_questions: int) -> str:
     prompt = (
