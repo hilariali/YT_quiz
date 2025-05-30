@@ -1,126 +1,117 @@
 import streamlit as st
-# Note: fileWatcherType must be set via config.toml or CLI, not in code
-
 import re
-import subprocess
+import openai
 from pytube import YouTube
 from pytube.exceptions import RegexMatchError, VideoUnavailable
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 from urllib.error import HTTPError, URLError
-import textwrap
-import openai
 
-# Initialize OpenAI client using your existing setup
+# Initialize OpenAI client
 client = openai.OpenAI(
     api_key=st.secrets["OPENAI_API_KEY"],
-    base_url=st.secrets["OPENAI_BASE_URL"]
+    base_url=st.secrets.get("OPENAI_BASE_URL")  # optional
 )
 
-# Constants
-CHUNK_SIZE = 100000  # Characters per transcript chunk
-MAX_TITLE_LENGTH = 50  # Max filename length
+CHUNK_SIZE = 100000
+MAX_TITLE_LENGTH = 50
 
-# Utility functions
-def sanitize_title(title: str, max_length: int = MAX_TITLE_LENGTH) -> str:
+# Session-state defaults
+if 'summary' not in st.session_state:
+    st.session_state.summary = None
+if 'transcript' not in st.session_state:
+    st.session_state.transcript = None
+if 'quiz' not in st.session_state:
+    st.session_state.quiz = None
+if 'last_url' not in st.session_state:
+    st.session_state.last_url = None
+
+def sanitize_title(title):
     safe = re.sub(r'[\\/*?:"<>|]', '', title)
-    return re.sub(r"\s+", ' ', safe).strip()[:max_length].rstrip()
+    return re.sub(r"\s+", " ", safe).strip()[:MAX_TITLE_LENGTH]
 
-def get_video_id(url: str) -> str:
+def get_video_id(url):
     if 'v=' in url:
         return url.split('v=')[1].split('&')[0]
     if 'youtu.be/' in url:
         return url.split('youtu.be/')[1].split('?')[0]
     return url
 
-def list_transcript_languages(video_id: str) -> dict:
+def list_transcript_languages(vid):
     try:
-        transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
+        ts = YouTubeTranscriptApi.list_transcripts(vid)
     except (TranscriptsDisabled, NoTranscriptFound):
         return {}
-    return {t.language_code: ('auto' if t.is_generated else 'manual') for t in transcripts}
+    return {t.language_code: ('auto' if t.is_generated else 'manual') for t in ts}
 
-def fetch_transcript(video_id: str, lang: str) -> str:
-    """
-    Fetch transcript text safely, returning empty on any failure.
-    """
+def fetch_transcript(video_id, lang):
     try:
         entries = YouTubeTranscriptApi.get_transcript(video_id, languages=[lang])
     except Exception:
-        return ''
-    if not entries:
-        return ''
-    try:
-        return '\n'.join(item.get('text', '') for item in entries)
-    except Exception:
-        return ''
+        return ""
+    return "\n".join(e.get('text','') for e in entries)
 
-# Summarization and quiz generation using Meta-Llama
-def summarize_chunk(text: str, lang: str) -> str:
-    prompt = f"Please summarize the following transcript chunk in {lang}:\n\n{text}"
-    try:
-        resp = client.chat.completions.create(
-            model="Meta-Llama-4-Maverick-17B-128E-Instruct-FP8",
-            messages=[{'role':'user','content': prompt}],
-        )
-        return resp.choices[0].message.content
-    except Exception as e:
-        st.error(f"Summarization error: {e}")
-        return ''
+def summarize_chunk(text, lang):
+    resp = client.chat.completions.create(
+        model="Meta-Llama-4-Maverick-17B-128E-Instruct-FP8",
+        messages=[{'role':'user','content':f"Please summarize the following transcript chunk in {lang}:\n\n{text}"}]
+    )
+    return resp.choices[0].message.content
 
-def summarize_transcript(transcript: str, lang: str) -> str:
+def summarize_transcript(transcript, lang):
     if len(transcript) <= CHUNK_SIZE:
         return summarize_chunk(transcript, lang)
-    parts = []
-    for i in range(0, len(transcript), CHUNK_SIZE):
-        chunk = transcript[i:i+CHUNK_SIZE]
-        parts.append(summarize_chunk(chunk, lang))
-    combined = '\n'.join(parts)
-    return summarize_chunk(combined, lang)
+    parts = [summarize_chunk(transcript[i:i+CHUNK_SIZE], lang)
+             for i in range(0, len(transcript), CHUNK_SIZE)]
+    return summarize_chunk("\n".join(parts), lang)
 
-def generate_quiz(summary: str, lang: str, grade: str, num_questions: int) -> str:
-    prompt = (
-        f"Create a {num_questions}-question multiple-choice quiz in {lang} "
-        f"for grade {grade} students based on this summary:\n{summary}"
+def generate_quiz(summary, lang, grade, num_q):
+    resp = client.chat.completions.create(
+        model="Meta-Llama-4-Maverick-17B-128E-Instruct-FP8",
+        messages=[{'role':'user','content':(
+            f"Create a {num_q}-question multiple-choice quiz in {lang} for grade {grade} "
+            f"students based on this summary:\n{summary}"
+        )}]
     )
-    try:
-        resp = client.chat.completions.create(
-            model="Meta-Llama-4-Maverick-17B-128E-Instruct-FP8",
-            messages=[{'role':'user','content': prompt}],
-        )
-        return resp.choices[0].message.content
-    except Exception as e:
-        st.error(f"Quiz generation error: {e}")
-        return ''
+    return resp.choices[0].message.content
 
-# Streamlit UI
 st.set_page_config(page_title="YouTube Quiz Generator")
-st.title("YouTube Quiz Generator 📚")
+st.title("YouTube Quiz Generator 🚀")
 
-url = st.text_input("YouTube video URL:")
+url = st.text_input("YouTube video URL:", value=st.session_state.last_url or "")
+if url != st.session_state.last_url:
+    # clear previous state on URL change
+    st.session_state.last_url = url
+    st.session_state.summary = None
+    st.session_state.transcript = None
+    st.session_state.quiz = None
+
 if url:
-    video_id = get_video_id(url)
-    langs = list_transcript_languages(video_id)
+    vid = get_video_id(url)
+    langs = list_transcript_languages(vid)
     if not langs:
         st.error("No transcripts available for this video.")
     else:
         lang = st.selectbox("Transcript language:", list(langs.keys()))
-        if st.button("Generate Summary & Quiz"):
-            with st.spinner("Fetching transcript..."):
-                transcript = fetch_transcript(video_id, lang)
-            if not transcript:
-                st.error("Failed to fetch transcript in this language.")
-            else:
-                with st.spinner("Summarizing transcript..."):
-                    summary = summarize_transcript(transcript, lang)
-                if summary:
-                    st.subheader("Summary")
-                    st.write(summary)
+        if st.button("Generate Summary"):
+            with st.spinner("Fetching and summarizing…"):
+                st.session_state.transcript = fetch_transcript(vid, lang)
+                if not st.session_state.transcript:
+                    st.error("Could not fetch transcript.")
+                else:
+                    st.session_state.summary = summarize_transcript(st.session_state.transcript, lang)
 
-                    grade = st.text_input("Student's grade level:", value="10")
-                    num_q = st.number_input("Number of multiple-choice questions:", min_value=1, max_value=20, value=5)
-                    if st.button("Generate Quiz"):
-                        with st.spinner("Generating quiz..."):
-                            quiz = generate_quiz(summary, lang, grade, int(num_q))
-                        if quiz:
-                            st.subheader("Quiz")
-                            st.write(quiz)
+        if st.session_state.summary:
+            st.subheader("Summary")
+            st.write(st.session_state.summary)
+
+            grade = st.text_input("Grade level:", "10")
+            num_q = st.number_input("Number of questions:", 1, 20, 5)
+            if st.button("Generate Quiz"):
+                with st.spinner("Creating quiz…"):
+                    st.session_state.quiz = generate_quiz(
+                        st.session_state.summary, lang, grade, int(num_q)
+                    )
+
+        if st.session_state.quiz:
+            st.subheader("Quiz")
+            st.write(st.session_state.quiz)
