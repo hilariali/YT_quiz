@@ -14,12 +14,13 @@ from youtube_transcript_api import (
 from urllib.error import HTTPError, URLError
 
 # ------------------------------------------------------------------------------
-# NOTE: Ensure .streamlit/config.toml exists in your repo root with:
+# NOTE: Ensure you have a `.streamlit/config.toml` at your repo root with:
+#
 # [server]
 # fileWatcherType = "none"
 # ------------------------------------------------------------------------------
 
-# Initialize OpenAI client
+# Initialize OpenAI client (adjust base_url if you use a custom endpoint)
 client = openai.OpenAI(
     api_key=st.secrets["OPENAI_API_KEY"],
     base_url=st.secrets.get("OPENAI_BASE_URL")  # optional
@@ -43,6 +44,7 @@ defaults = {
     "used_proxy_for_transcript": None,
     "summary": "",
     "quiz": "",
+    "mod_instructions": "",
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -179,6 +181,22 @@ def generate_quiz(summary: str, lang: str, grade: str, num_questions: int) -> st
         st.text(traceback.format_exc())
         return ""
 
+def modify_quiz(existing_quiz: str, instructions: str, lang: str) -> str:
+    prompt = (
+        f"Modify this quiz in {lang} as follows: {instructions}\n\n"
+        f"Current quiz:\n{existing_quiz}"
+    )
+    try:
+        resp = client.chat.completions.create(
+            model="Meta-Llama-4-Maverick-17B-128E-Instruct-FP8",
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.choices[0].message.content
+    except Exception as e:
+        st.error(f"Quiz modification error: {e}")
+        st.text(traceback.format_exc())
+        return ""
+
 # ------------------------------------------------------------------------------
 # Streamlit UI
 # ------------------------------------------------------------------------------
@@ -207,13 +225,14 @@ if submit_button:
     st.session_state.used_proxy_for_transcript = None
     st.session_state.summary = ""
     st.session_state.quiz = ""
+    st.session_state.mod_instructions = ""
 
 # Only proceed if form was submitted
 if st.session_state.submitted and st.session_state.last_url:
     vid = st.session_state.video_id
     proxy_list = parse_proxies(st.session_state.proxies)
 
-    # 1) List languages
+    # 1) List available languages (no proxy → each proxy)
     if not st.session_state.langs:
         langs, used_proxy = list_transcript_languages(vid, proxy_list)
         st.session_state.langs = langs
@@ -224,9 +243,7 @@ if st.session_state.submitted and st.session_state.last_url:
     else:
         # Let user pick caption language
         st.session_state.selected_lang = st.selectbox(
-            "Transcript language:",
-            list(st.session_state.langs.keys()),
-            index=0
+            "Transcript language:", list(st.session_state.langs.keys()), index=0
         )
 
         # 2) Generate summary button
@@ -267,3 +284,24 @@ if st.session_state.submitted and st.session_state.last_url:
         if st.session_state.quiz:
             st.subheader("Quiz")
             st.write(st.session_state.quiz)
+
+            # 6) Modification instructions UI
+            st.markdown("**Modify the quiz (optional):**")
+            st.session_state.mod_instructions = st.text_area(
+                "Enter modification instructions:",
+                value=st.session_state.mod_instructions,
+                height=100
+            )
+            if st.button("Apply Modifications"):
+                if st.session_state.mod_instructions.strip():
+                    with st.spinner("Applying modifications…"):
+                        modified = modify_quiz(
+                            st.session_state.quiz,
+                            st.session_state.mod_instructions,
+                            st.session_state.selected_lang
+                        )
+                        if modified:
+                            st.session_state.quiz = modified
+                            st.success("Quiz updated.")
+                else:
+                    st.warning("Please enter some instructions to modify the quiz.")
