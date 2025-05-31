@@ -252,7 +252,7 @@ if st.session_state.submitted and st.session_state.last_url:
             "Transcript language:", list(st.session_state.langs.keys()), index=0
         )
 
-        # 2) Fetch and show transcript
+        # 2) Show Transcript button
         if not st.session_state.transcript_fetched:
             if st.button("Show Transcript"):
                 text, used_proxy_trans = fetch_transcript_with_fallback(
@@ -267,7 +267,7 @@ if st.session_state.submitted and st.session_state.last_url:
                 else:
                     st.session_state.transcript_fetched = True
 
-        # Display transcript once fetched
+        # 3) Display transcript once fetched
         if st.session_state.transcript_fetched and st.session_state.transcript:
             st.subheader("🔹 Transcript")
             st.text_area(
@@ -277,21 +277,21 @@ if st.session_state.submitted and st.session_state.last_url:
                 disabled=True
             )
 
-        # 3) Generate and show summary
-        if st.session_state.transcript_fetched and not st.session_state.summary_generated:
-            if st.button("Generate Summary"):
-                with st.spinner("Summarizing transcript…"):
-                    st.session_state.summary = summarize_transcript(
-                        st.session_state.transcript, st.session_state.selected_lang
-                    )
-                    st.session_state.summary_generated = True
+            # 4) Generate summary button
+            if not st.session_state.summary_generated:
+                if st.button("Generate Summary"):
+                    with st.spinner("Summarizing transcript…"):
+                        st.session_state.summary = summarize_transcript(
+                            st.session_state.transcript, st.session_state.selected_lang
+                        )
+                        st.session_state.summary_generated = True
 
+        # 5) Display summary if generated
         if st.session_state.summary_generated and st.session_state.summary:
             st.subheader("🔹 Summary")
             st.write(st.session_state.summary)
 
-        # 4) Quiz specification & generation
-        if st.session_state.summary_generated:
+            # 6) Quiz specification & generation
             grade = st.text_input("Student's grade level:", value="10")
             num_q = st.number_input("Number of questions:", min_value=1, max_value=20, value=5)
             if not st.session_state.quiz_generated:
@@ -305,31 +305,33 @@ if st.session_state.submitted and st.session_state.last_url:
                         )
                         st.session_state.quiz_generated = True
 
-        # 5) Display quiz if generated
+        # 7) Display quiz if generated
         if st.session_state.quiz_generated and st.session_state.quiz:
             st.subheader("🔹 Quiz")
             st.write(st.session_state.quiz)
 
-            # 6) Modification instructions UI
+            # 8) Modification instructions UI
             st.markdown("**Modify the quiz (optional):**")
-            mod_instr = st.text_area(
+            # Only store mod_instructions via the widget itself; do not assign back
+            instruction = st.text_area(
                 "Enter modification instructions:",
                 value=st.session_state.mod_instructions,
                 key="mod_instructions",
                 height=120
             )
 
-            # 7) Apply modifications button
+            # 9) Apply modifications button
             if st.button("Apply Modifications"):
-                if mod_instr.strip():
+                if instruction.strip():
                     with st.spinner("Applying modifications…"):
                         modified = modify_quiz(
                             st.session_state.quiz,
-                            mod_instr,
+                            instruction,
                             st.session_state.selected_lang
                         )
                         if modified:
                             st.session_state.quiz = modified
-                            st.success("Quiz updated.")
+                            st.session_state.mod_instructions = instruction
+                            st.success("Quiz updated.") 
                 else:
                     st.warning("Please enter instructions to modify the quiz.")
