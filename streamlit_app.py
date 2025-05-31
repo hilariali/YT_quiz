@@ -48,6 +48,8 @@ defaults = {
     "quiz": "",
     "quiz_generated": False,
     "mod_instructions": "",
+    "updated_quiz": "",           # holds the quiz returned from modification
+    "updated_pending": False,     # flag to show "Show Updated Quiz" button
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -232,6 +234,8 @@ if submit_button:
     st.session_state.quiz = ""
     st.session_state.quiz_generated = False
     st.session_state.mod_instructions = ""
+    st.session_state.updated_quiz = ""
+    st.session_state.updated_pending = False
 
 # Only proceed if form was submitted
 if st.session_state.submitted and st.session_state.last_url:
@@ -330,7 +334,17 @@ if st.session_state.submitted and st.session_state.last_url:
                             st.session_state.selected_lang
                         )
                         if modified:
-                            st.session_state.quiz = modified
-                            st.success("Quiz updated.")
+                            st.session_state.updated_quiz = modified
+                            st.session_state.updated_pending = True
+                            st.success("Modifications ready. Click 'Show Updated Quiz' to view.")
                 else:
                     st.warning("Please enter instructions to modify the quiz.")
+
+            # 10) Show Updated Quiz button
+            if st.session_state.updated_pending:
+                if st.button("Show Updated Quiz"):
+                    st.session_state.quiz = st.session_state.updated_quiz
+                    st.session_state.updated_pending = False
+                    st.success("Displaying updated quiz below.")
+                    st.subheader("🔹 Quiz (Updated)")
+                    st.write(st.session_state.quiz)
