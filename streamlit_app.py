@@ -312,8 +312,7 @@ if st.session_state.submitted and st.session_state.last_url:
 
             # 8) Modification instructions UI
             st.markdown("**Modify the quiz (optional):**")
-            # Only store mod_instructions via the widget itself; do not assign back
-            instruction = st.text_area(
+            _ = st.text_area(
                 "Enter modification instructions:",
                 value=st.session_state.mod_instructions,
                 key="mod_instructions",
@@ -322,16 +321,16 @@ if st.session_state.submitted and st.session_state.last_url:
 
             # 9) Apply modifications button
             if st.button("Apply Modifications"):
-                if instruction.strip():
+                instructions = st.session_state.mod_instructions
+                if instructions.strip():
                     with st.spinner("Applying modifications…"):
                         modified = modify_quiz(
                             st.session_state.quiz,
-                            instruction,
+                            instructions,
                             st.session_state.selected_lang
                         )
                         if modified:
                             st.session_state.quiz = modified
-                            st.session_state.mod_instructions = instruction
-                            st.success("Quiz updated.") 
+                            st.success("Quiz updated.")
                 else:
                     st.warning("Please enter instructions to modify the quiz.")
