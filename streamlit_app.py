@@ -68,6 +68,29 @@ def get_video_id(url: str) -> str:
 def parse_proxies(proxy_input: str) -> list[str]:
     return [u.strip() for u in proxy_input.split(",") if u.strip()]
 
+def list_languages_yt_dlp(video_id: str) -> dict:
+    """
+    Use yt_dlp to extract available subtitle language codes (manual + auto).
+    Returns a dict {language_code: "manual"/"auto"}.
+    """
+    try:
+        ydl_opts = {"skip_download": True, "quiet": True, "no_warnings": True}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+            manual = {}
+            subs = info.get("subtitles") or {}
+            for code in subs.keys():
+                manual[code] = "manual"
+            auto = {}
+            ac = info.get("automatic_captions") or {}
+            for code in ac.keys():
+                if code not in manual:
+                    auto[code] = "auto"
+            langs = {**manual, **auto}
+            return langs
+    except Exception:
+        return {}
+
 def try_list_transcripts_api(video_id: str, proxies: dict | None) -> dict:
     """
     Try to list via youtube_transcript_api. Returns a dict of language_code -> type,
@@ -81,78 +104,38 @@ def try_list_transcripts_api(video_id: str, proxies: dict | None) -> dict:
 
 def list_transcript_languages(video_id: str, proxy_list: list[str]) -> tuple[dict, dict | None]:
     """
-    1) Attempt to list via youtube_transcript_api (no proxy → proxies).
-    2) If all fail, fall back to yt_dlp to extract available subtitle languages.
+    1) Attempt to list via yt_dlp.
+    2) If that fails (langs empty), try youtube_transcript_api (no proxy → proxies).
     Returns (langs_dict, used_proxy_dict_or_None).
     """
-    st.info("Attempting to list transcript languages via API without proxy…")
+    st.info("Attempting to list languages via yt_dlp...")
+    langs = list_languages_yt_dlp(video_id)
+    if langs:
+        st.success(f"✓ Languages found via yt_dlp: {', '.join(langs.keys())}")
+        return langs, None
+
+    st.info("Falling back to youtube_transcript_api without proxy...")
     langs = try_list_transcripts_api(video_id, None)
     if langs:
-        st.success("✓ Languages found without proxy via API")
+        st.success("✓ Languages found via API without proxy")
         return langs, None
 
     for p in proxy_list:
         proxy_cfg = {"http": p, "https": p}
-        st.info(f"Trying proxy {p} for list_transcripts API…")
+        st.info(f"Trying proxy {p} for list_transcripts API...")
         langs = try_list_transcripts_api(video_id, proxy_cfg)
         if langs:
-            st.success(f"✓ Languages found via proxy {p} using API")
+            st.success(f"✓ Languages found via API proxy {p}")
             return langs, proxy_cfg
 
-    st.info("Falling back to yt_dlp to discover available subtitle languages…")
-    try:
-        ydl_opts = {"skip_download": True, "quiet": True, "no_warnings": True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-            # collect manual subtitles
-            manual = {}
-            subs = info.get("subtitles") or {}
-            for code in subs.keys():
-                manual[code] = "manual"
-            # collect automatic captions
-            auto = {}
-            ac = info.get("automatic_captions") or {}
-            for code in ac.keys():
-                # If also in manual, keep manual, else mark auto
-                if code not in manual:
-                    auto[code] = "auto"
-            langs = {**manual, **auto}
-            if langs:
-                st.success(f"✓ Languages found via yt_dlp: {', '.join(langs.keys())}")
-                return langs, None
-            else:
-                st.error("✗ yt_dlp found no subtitles.")
-    except Exception as e:
-        st.error(f"yt_dlp fallback error when listing languages: {e}")
-
+    st.error("✗ Unable to list transcript languages (yt_dlp + API all failed)")
     return {}, None
 
-def try_fetch_transcript(video_id: str, lang: str, proxies: dict | None) -> str:
-    try:
-        entries = YouTubeTranscriptApi.get_transcript(
-            video_id, languages=[lang], proxies=proxies
-        )
-        return "\n".join(e.get("text", "") for e in entries)
-    except Exception as e:
-        st.warning(f"  • get_transcript failed (proxies={proxies}): {e}")
-        return ""
-
-def fetch_transcript_with_fallback(video_id: str, lang: str, proxy_list: list[str]) -> tuple[str, dict | None]:
-    st.info("Fetching transcript via API without proxy…")
-    text = try_fetch_transcript(video_id, lang, None)
-    if text:
-        st.success("✓ Fetched transcript without proxy via API")
-        return text, None
-
-    for p in proxy_list:
-        proxy_cfg = {"http": p, "https": p}
-        st.info(f"Trying proxy {p} for get_transcript API…")
-        text = try_fetch_transcript(video_id, lang, proxy_cfg)
-        if text:
-            st.success(f"✓ Fetched transcript via proxy {p} using API")
-            return text, proxy_cfg
-
-    st.info("Falling back to yt_dlp to scrape subtitles…")
+def fetch_transcript_yt_dlp(video_id: str, lang: str) -> str:
+    """
+    Use yt_dlp to download .vtt/.srt for the given language.
+    Returns joined text or "".
+    """
     try:
         ydl_opts = {
             "skip_download": True,
@@ -174,17 +157,48 @@ def fetch_transcript_with_fallback(video_id: str, lang: str, proxy_list: list[st
                     if row.startswith("WEBVTT") or re.match(r"^\d\d:\d\d:\d\d\.\d\d\d -->", row):
                         continue
                     lines.append(row)
-                transcript_text = "\n".join(lines).strip()
-                if transcript_text:
-                    st.success("✓ Fetched transcript via yt_dlp")
-                    return transcript_text, None
-                else:
-                    st.warning("yt_dlp found subtitles but they were empty.")
-            else:
-                st.warning("No subtitle track found via yt_dlp.")
-    except Exception as e:
-        st.error(f"yt_dlp fallback error when fetching transcript: {e}")
+                return "\n".join(lines).strip()
+    except Exception:
+        pass
+    return ""
 
+def try_fetch_transcript_api(video_id: str, lang: str, proxies: dict | None) -> str:
+    """
+    Try youtube_transcript_api.get_transcript(...). Return raw text or "" if fails.
+    """
+    try:
+        entries = YouTubeTranscriptApi.get_transcript(video_id, languages=[lang], proxies=proxies)
+        return "\n".join(e.get("text", "") for e in entries)
+    except Exception:
+        return ""
+
+def fetch_transcript_with_fallback(video_id: str, lang: str, proxy_list: list[str]) -> tuple[str, dict | None]:
+    """
+    1) Attempt to fetch via yt_dlp.
+    2) If that fails (empty), attempt youtube_transcript_api (no proxy → proxies).
+    Returns (transcript_text, used_proxy_dict_or_None).
+    """
+    st.info("Attempting to fetch transcript via yt_dlp...")
+    text = fetch_transcript_yt_dlp(video_id, lang)
+    if text:
+        st.success("✓ Fetched transcript via yt_dlp")
+        return text, None
+
+    st.info("Falling back to youtube_transcript_api without proxy...")
+    text = try_fetch_transcript_api(video_id, lang, None)
+    if text:
+        st.success("✓ Fetched transcript via API without proxy")
+        return text, None
+
+    for p in proxy_list:
+        proxy_cfg = {"http": p, "https": p}
+        st.info(f"Trying proxy {p} for get_transcript API...")
+        text = try_fetch_transcript_api(video_id, lang, proxy_cfg)
+        if text:
+            st.success(f"✓ Fetched transcript via API proxy {p}")
+            return text, proxy_cfg
+
+    st.error("✗ Unable to fetch transcript (yt_dlp + API all failed)")
     return "", None
 
 def summarize_chunk(text: str, lang: str) -> str:
@@ -280,14 +294,14 @@ if st.session_state.submitted and st.session_state.last_url:
     vid = st.session_state.video_id
     proxy_list = parse_proxies(st.session_state.proxies)
 
-    # 1) List available languages (API w/o proxy → API w/ proxies → yt-dlp fallback)
+    # 1) List available languages (yt_dlp → API no proxy → API with proxy)
     if not st.session_state.langs:
         langs, used_proxy = list_transcript_languages(vid, proxy_list)
         st.session_state.langs = langs
         st.session_state.used_proxy_for_langs = used_proxy
 
     if not st.session_state.langs:
-        st.error("No transcripts available—your IP may be blocked. Try different proxies.")
+        st.error("No transcripts available—yt_dlp & API all failed, or IP blocked.")
     else:
         # Let user pick caption language
         st.session_state.selected_lang = st.selectbox(
@@ -305,7 +319,7 @@ if st.session_state.submitted and st.session_state.last_url:
                 st.session_state.transcript = text
                 st.session_state.used_proxy_for_transcript = used_proxy_trans
                 if not text:
-                    st.error("Failed to fetch transcript—try different proxies or URL.")
+                    st.error("Failed to fetch transcript—yt_dlp & API all failed.")
                 else:
                     st.session_state.transcript_fetched = True
 
