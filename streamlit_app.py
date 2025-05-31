@@ -200,7 +200,7 @@ def modify_quiz(existing_quiz: str, instructions: str, lang: str) -> str:
 # ------------------------------------------------------------------------------
 # Streamlit UI
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="YouTube Quiz Generator")
+st.set_page_config(page_title="YouTube Quiz Generator", layout="wide")
 st.title("YouTube Quiz Generator 📚")
 
 # --- Input Form for Mobile-friendly UI ---
@@ -263,7 +263,7 @@ if st.session_state.submitted and st.session_state.last_url:
 
         # 3) Display summary if available
         if st.session_state.summary:
-            st.subheader("Summary")
+            st.subheader("🔹 Summary")
             st.write(st.session_state.summary)
 
             # Quiz parameters
@@ -282,26 +282,30 @@ if st.session_state.submitted and st.session_state.last_url:
 
         # 5) Display quiz if available
         if st.session_state.quiz:
-            st.subheader("Quiz")
+            st.subheader("🔹 Quiz")
             st.write(st.session_state.quiz)
 
-            # 6) Modification instructions UI
+            # 6) Modification instructions UI in a form
             st.markdown("**Modify the quiz (optional):**")
-            st.session_state.mod_instructions = st.text_area(
-                "Enter modification instructions:",
-                value=st.session_state.mod_instructions,
-                height=100
-            )
-            if st.button("Apply Modifications"):
-                if st.session_state.mod_instructions.strip():
+            with st.form(key="mod_form", clear_on_submit=False):
+                mod_instr = st.text_area(
+                    "Enter modification instructions:",
+                    value=st.session_state.mod_instructions,
+                    height=120
+                )
+                modify_submit = st.form_submit_button(label="Apply Modifications")
+
+            if modify_submit:
+                if mod_instr.strip():
                     with st.spinner("Applying modifications…"):
                         modified = modify_quiz(
                             st.session_state.quiz,
-                            st.session_state.mod_instructions,
+                            mod_instr,
                             st.session_state.selected_lang
                         )
                         if modified:
                             st.session_state.quiz = modified
+                            st.session_state.mod_instructions = mod_instr
                             st.success("Quiz updated.")
                 else:
-                    st.warning("Please enter some instructions to modify the quiz.")
+                    st.warning("Please enter instructions to modify the quiz.")
