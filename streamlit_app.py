@@ -285,27 +285,26 @@ if st.session_state.submitted and st.session_state.last_url:
             st.subheader("🔹 Quiz")
             st.write(st.session_state.quiz)
 
-            # 6) Modification instructions UI in a form
+            # 6) Modification instructions UI
             st.markdown("**Modify the quiz (optional):**")
-            with st.form(key="mod_form", clear_on_submit=False):
-                mod_instr = st.text_area(
-                    "Enter modification instructions:",
-                    value=st.session_state.mod_instructions,
-                    height=120
-                )
-                modify_submit = st.form_submit_button(label="Apply Modifications")
-
-            if modify_submit:
-                if mod_instr.strip():
+            # Use a keyed text_area so its value persists
+            mod_instr = st.text_area(
+                "Enter modification instructions:",
+                value=st.session_state.mod_instructions,
+                key="mod_instructions",
+                height=120
+            )
+            # When this button is clicked, we use st.session_state.mod_instructions directly
+            if st.button("Apply Modifications"):
+                if st.session_state.mod_instructions.strip():
                     with st.spinner("Applying modifications…"):
                         modified = modify_quiz(
                             st.session_state.quiz,
-                            mod_instr,
+                            st.session_state.mod_instructions,
                             st.session_state.selected_lang
                         )
                         if modified:
                             st.session_state.quiz = modified
-                            st.session_state.mod_instructions = mod_instr
                             st.success("Quiz updated.")
                 else:
                     st.warning("Please enter instructions to modify the quiz.")
