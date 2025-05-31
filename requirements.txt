@@ -3,3 +3,4 @@ openai
 pytube
 youtube-transcript-api
 yt-dlp
+requests
