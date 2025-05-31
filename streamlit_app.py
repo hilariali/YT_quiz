@@ -312,7 +312,7 @@ if st.session_state.submitted and st.session_state.last_url:
 
             # 6) Modification instructions UI
             st.markdown("**Modify the quiz (optional):**")
-            st.session_state.mod_instructions = st.text_area(
+            mod_instr = st.text_area(
                 "Enter modification instructions:",
                 value=st.session_state.mod_instructions,
                 key="mod_instructions",
@@ -321,11 +321,11 @@ if st.session_state.submitted and st.session_state.last_url:
 
             # 7) Apply modifications button
             if st.button("Apply Modifications"):
-                if st.session_state.mod_instructions.strip():
+                if mod_instr.strip():
                     with st.spinner("Applying modifications…"):
                         modified = modify_quiz(
                             st.session_state.quiz,
-                            st.session_state.mod_instructions,
+                            mod_instr,
                             st.session_state.selected_lang
                         )
                         if modified:
