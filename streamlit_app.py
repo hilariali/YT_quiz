@@ -5,13 +5,8 @@ import traceback
 import requests
 import yt_dlp
 
-from pytube import YouTube
-from youtube_transcript_api import (
-    YouTubeTranscriptApi,
-    TranscriptsDisabled,
-    NoTranscriptFound,
-)
-from urllib.error import HTTPError, URLError
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
 
 # ------------------------------------------------------------------------------
 # NOTE: Ensure you have a `.streamlit/config.toml` at your repo root with:
@@ -59,14 +54,22 @@ for key, val in defaults.items():
 # Utility functions
 # ------------------------------------------------------------------------------
 def get_video_id(url: str) -> str:
+    """
+    Extract YouTube video ID from URL or return input if already an ID.
+    """
     if "v=" in url:
         return url.split("v=")[1].split("&")[0]
     if "youtu.be/" in url:
         return url.split("youtu.be/")[1].split("?")[0]
     return url.strip()
 
+
 def parse_proxies(proxy_input: str) -> list[str]:
+    """
+    Convert comma-separated proxy URLs into a list.
+    """
     return [u.strip() for u in proxy_input.split(",") if u.strip()]
+
 
 def list_languages_yt_dlp(video_id: str) -> dict:
     """
@@ -74,47 +77,56 @@ def list_languages_yt_dlp(video_id: str) -> dict:
     Returns a dict {language_code: "manual"/"auto"}.
     """
     try:
-        ydl_opts = {"skip_download": True, "quiet": True, "no_warnings": True}
+        ydl_opts = {
+            "skip_download": True,
+            "quiet": True,
+            "no_warnings": True,
+        }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-            manual = {}
+
+            langs: dict[str, str] = {}
+
+            # 1) Manual subtitles (info["subtitles"])
             subs = info.get("subtitles") or {}
             for code in subs.keys():
-                manual[code] = "manual"
-            auto = {}
-            ac = info.get("automatic_captions") or {}
-            for code in ac.keys():
-                if code not in manual:
-                    auto[code] = "auto"
-            langs = {**manual, **auto}
+                langs[code] = "manual"
+
+            # 2) Automatic captions (info["automatic_captions"])
+            auto = info.get("automatic_captions") or {}
+            for code in auto.keys():
+                if code not in langs:
+                    langs[code] = "auto"
+
             return langs
     except Exception:
         return {}
 
+
 def try_list_transcripts_api(video_id: str, proxies: dict | None) -> dict:
     """
-    Try to list via youtube_transcript_api. Returns a dict of language_code -> type,
-    or {} if it fails.
+    Try to list via youtube_transcript_api. Returns a dict {lang: "auto"/"manual"} or {} if it fails.
     """
     try:
         ts_list = YouTubeTranscriptApi.list_transcripts(video_id, proxies=proxies)
         return {t.language_code: ("auto" if t.is_generated else "manual") for t in ts_list}
-    except Exception:
+    except (TranscriptsDisabled, NoTranscriptFound, Exception):
         return {}
+
 
 def list_transcript_languages(video_id: str, proxy_list: list[str]) -> tuple[dict, dict | None]:
     """
-    1) Attempt to list via yt_dlp.
-    2) If that fails (langs empty), try youtube_transcript_api (no proxy → proxies).
+    1) Attempt to list via yt_dlp first.
+    2) If empty, fall back to YouTubeTranscriptApi (no proxy → each proxy).
     Returns (langs_dict, used_proxy_dict_or_None).
     """
-    st.info("Attempting to list languages via yt_dlp...")
+    st.info("Attempting to list languages via yt_dlp…")
     langs = list_languages_yt_dlp(video_id)
     if langs:
         st.success(f"✓ Languages found via yt_dlp: {', '.join(langs.keys())}")
         return langs, None
 
-    st.info("Falling back to youtube_transcript_api without proxy...")
+    st.info("Falling back to youtube_transcript_api (no proxy)…")
     langs = try_list_transcripts_api(video_id, None)
     if langs:
         st.success("✓ Languages found via API without proxy")
@@ -122,7 +134,7 @@ def list_transcript_languages(video_id: str, proxy_list: list[str]) -> tuple[dic
 
     for p in proxy_list:
         proxy_cfg = {"http": p, "https": p}
-        st.info(f"Trying proxy {p} for list_transcripts API...")
+        st.info(f"Trying proxy {p} for youtube_transcript_api…")
         langs = try_list_transcripts_api(video_id, proxy_cfg)
         if langs:
             st.success(f"✓ Languages found via API proxy {p}")
@@ -131,10 +143,11 @@ def list_transcript_languages(video_id: str, proxy_list: list[str]) -> tuple[dic
     st.error("✗ Unable to list transcript languages (yt_dlp + API all failed)")
     return {}, None
 
+
 def fetch_transcript_yt_dlp(video_id: str, lang: str) -> str:
     """
     Use yt_dlp to download .vtt/.srt for the given language.
-    Returns joined text or "".
+    Returns joined text or '' if nothing found.
     """
     try:
         ydl_opts = {
@@ -147,44 +160,56 @@ def fetch_transcript_yt_dlp(video_id: str, lang: str) -> str:
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-            subs = info.get("requested_subtitles") or info.get("automatic_captions") or {}
+
+            # 1) Check manual subtitles
+            subs = info.get("subtitles") or {}
             if lang in subs:
-                vtt_url = subs[lang]["url"]
-                r = requests.get(vtt_url, timeout=10)
-                vtt_text = r.text
-                lines = []
-                for row in vtt_text.splitlines():
-                    if row.startswith("WEBVTT") or re.match(r"^\d\d:\d\d:\d\d\.\d\d\d -->", row):
-                        continue
-                    lines.append(row)
-                return "\n".join(lines).strip()
+                vtt_url = subs[lang][0].get("url")
+            else:
+                # 2) Check automatic captions
+                auto = info.get("automatic_captions") or {}
+                if lang in auto:
+                    vtt_url = auto[lang][0].get("url")
+                else:
+                    return ""
+
+            # Download the VTT file and strip timing cues
+            r = requests.get(vtt_url, timeout=10)
+            vtt_text = r.text
+            lines = []
+            for row in vtt_text.splitlines():
+                if row.startswith("WEBVTT") or re.match(r"^\d\d:\d\d:\d\d\.\d\d\d -->", row):
+                    continue
+                lines.append(row)
+            return "\n".join(lines).strip()
     except Exception:
-        pass
-    return ""
+        return ""
+
 
 def try_fetch_transcript_api(video_id: str, lang: str, proxies: dict | None) -> str:
     """
-    Try youtube_transcript_api.get_transcript(...). Return raw text or "" if fails.
+    Try YouTubeTranscriptApi.get_transcript(...). Return raw text or '' if it fails.
     """
     try:
         entries = YouTubeTranscriptApi.get_transcript(video_id, languages=[lang], proxies=proxies)
         return "\n".join(e.get("text", "") for e in entries)
-    except Exception:
+    except (TranscriptsDisabled, NoTranscriptFound, Exception):
         return ""
+
 
 def fetch_transcript_with_fallback(video_id: str, lang: str, proxy_list: list[str]) -> tuple[str, dict | None]:
     """
     1) Attempt to fetch via yt_dlp.
-    2) If that fails (empty), attempt youtube_transcript_api (no proxy → proxies).
+    2) If empty, fall back to YouTubeTranscriptApi (no proxy → each proxy).
     Returns (transcript_text, used_proxy_dict_or_None).
     """
-    st.info("Attempting to fetch transcript via yt_dlp...")
+    st.info("Attempting to fetch transcript via yt_dlp…")
     text = fetch_transcript_yt_dlp(video_id, lang)
     if text:
         st.success("✓ Fetched transcript via yt_dlp")
         return text, None
 
-    st.info("Falling back to youtube_transcript_api without proxy...")
+    st.info("Falling back to youtube_transcript_api (no proxy)…")
     text = try_fetch_transcript_api(video_id, lang, None)
     if text:
         st.success("✓ Fetched transcript via API without proxy")
@@ -192,7 +217,7 @@ def fetch_transcript_with_fallback(video_id: str, lang: str, proxy_list: list[st
 
     for p in proxy_list:
         proxy_cfg = {"http": p, "https": p}
-        st.info(f"Trying proxy {p} for get_transcript API...")
+        st.info(f"Trying proxy {p} for get_transcript API…")
         text = try_fetch_transcript_api(video_id, lang, proxy_cfg)
         if text:
             st.success(f"✓ Fetched transcript via API proxy {p}")
@@ -201,7 +226,11 @@ def fetch_transcript_with_fallback(video_id: str, lang: str, proxy_list: list[st
     st.error("✗ Unable to fetch transcript (yt_dlp + API all failed)")
     return "", None
 
+
 def summarize_chunk(text: str, lang: str) -> str:
+    """
+    Send a single chunk to OpenAI to summarize.
+    """
     prompt = f"Please summarize the following transcript chunk in {lang}:\n\n{text}"
     try:
         resp = client.chat.completions.create(
@@ -214,7 +243,11 @@ def summarize_chunk(text: str, lang: str) -> str:
         st.text(traceback.format_exc())
         return ""
 
+
 def summarize_transcript(transcript: str, lang: str) -> str:
+    """
+    Break transcript into chunks and summarize iteratively.
+    """
     if len(transcript) <= CHUNK_SIZE:
         return summarize_chunk(transcript, lang)
     parts = []
@@ -222,7 +255,11 @@ def summarize_transcript(transcript: str, lang: str) -> str:
         parts.append(summarize_chunk(transcript[i : i + CHUNK_SIZE], lang))
     return summarize_chunk("\n".join(parts), lang)
 
+
 def generate_quiz(summary: str, lang: str, grade: str, num_questions: int) -> str:
+    """
+    Ask the model to create a multiple-choice quiz based on the summary.
+    """
     prompt = (
         f"Create a {num_questions}-question multiple-choice quiz in {lang} "
         f"for grade {grade} students based on this summary:\n\n{summary}"
@@ -238,7 +275,11 @@ def generate_quiz(summary: str, lang: str, grade: str, num_questions: int) -> st
         st.text(traceback.format_exc())
         return ""
 
+
 def modify_quiz(existing_quiz: str, instructions: str, lang: str) -> str:
+    """
+    Ask the model to modify the existing quiz as per user instructions.
+    """
     prompt = (
         f"Modify this quiz in {lang} as follows: {instructions}\n\n"
         f"Current quiz:\n{existing_quiz}"
@@ -254,6 +295,7 @@ def modify_quiz(existing_quiz: str, instructions: str, lang: str) -> str:
         st.text(traceback.format_exc())
         return ""
 
+
 # ------------------------------------------------------------------------------
 # Streamlit UI
 # ------------------------------------------------------------------------------
@@ -262,7 +304,9 @@ st.title("YouTube Quiz Generator 📚")
 
 # --- Input Form for Mobile-friendly UI ---
 with st.form(key="input_form", clear_on_submit=False):
-    url_input = st.text_input("YouTube video URL:", value=st.session_state.last_url)
+    url_input = st.text_input(
+        "YouTube video URL:", value=st.session_state.last_url
+    )
     proxy_input = st.text_input(
         "Optional: HTTP(S) proxy URLs (comma-separated):",
         value=st.session_state.proxies,
@@ -294,7 +338,7 @@ if st.session_state.submitted and st.session_state.last_url:
     vid = st.session_state.video_id
     proxy_list = parse_proxies(st.session_state.proxies)
 
-    # 1) List available languages (yt_dlp → API no proxy → API with proxy)
+    # 1) List available languages (yt_dlp → API without proxy → API with proxy)
     if not st.session_state.langs:
         langs, used_proxy = list_transcript_languages(vid, proxy_list)
         st.session_state.langs = langs
@@ -349,7 +393,9 @@ if st.session_state.submitted and st.session_state.last_url:
 
             # 6) Quiz specification & generation
             grade = st.text_input("Student's grade level:", value="10")
-            num_q = st.number_input("Number of questions:", min_value=1, max_value=20, value=5)
+            num_q = st.number_input(
+                "Number of questions:", min_value=1, max_value=20, value=5
+            )
             if not st.session_state.quiz_generated:
                 if st.button("Generate Quiz"):
                     with st.spinner("Creating quiz…"):
