@@ -42,10 +42,12 @@ defaults = {
     "selected_lang": "",
     "transcript": "",
     "used_proxy_for_transcript": None,
+    "transcript_fetched": False,
     "summary": "",
+    "summary_generated": False,
     "quiz": "",
+    "quiz_generated": False,
     "mod_instructions": "",
-    "quiz_modified": False,  # flag to indicate quiz was modified
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -224,10 +226,12 @@ if submit_button:
     st.session_state.selected_lang = ""
     st.session_state.transcript = ""
     st.session_state.used_proxy_for_transcript = None
+    st.session_state.transcript_fetched = False
     st.session_state.summary = ""
+    st.session_state.summary_generated = False
     st.session_state.quiz = ""
+    st.session_state.quiz_generated = False
     st.session_state.mod_instructions = ""
-    st.session_state.quiz_modified = False  # reset modification flag
 
 # Only proceed if form was submitted
 if st.session_state.submitted and st.session_state.last_url:
@@ -248,49 +252,67 @@ if st.session_state.submitted and st.session_state.last_url:
             "Transcript language:", list(st.session_state.langs.keys()), index=0
         )
 
-        # 2) Generate summary button
-        if st.button("Generate Summary"):
-            text, used_proxy_trans = fetch_transcript_with_fallback(
-                st.session_state.video_id,
-                st.session_state.selected_lang,
-                proxy_list,
-            )
-            st.session_state.transcript = text
-            st.session_state.used_proxy_for_transcript = used_proxy_trans
-            if not text:
-                st.error("Failed to fetch transcript—try different proxies or URL.")
-            else:
-                with st.spinner("Summarizing transcript…"):
-                    st.session_state.summary = summarize_transcript(text, st.session_state.selected_lang)
+        # 2) Fetch and show transcript
+        if not st.session_state.transcript_fetched:
+            if st.button("Show Transcript"):
+                text, used_proxy_trans = fetch_transcript_with_fallback(
+                    st.session_state.video_id,
+                    st.session_state.selected_lang,
+                    proxy_list,
+                )
+                st.session_state.transcript = text
+                st.session_state.used_proxy_for_transcript = used_proxy_trans
+                if not text:
+                    st.error("Failed to fetch transcript—try different proxies or URL.")
+                else:
+                    st.session_state.transcript_fetched = True
 
-        # 3) Display summary if available
-        if st.session_state.summary:
+        # Display transcript once fetched
+        if st.session_state.transcript_fetched and st.session_state.transcript:
+            st.subheader("🔹 Transcript")
+            st.text_area(
+                "Transcript text:",
+                value=st.session_state.transcript,
+                height=200,
+                disabled=True
+            )
+
+        # 3) Generate and show summary
+        if st.session_state.transcript_fetched and not st.session_state.summary_generated:
+            if st.button("Generate Summary"):
+                with st.spinner("Summarizing transcript…"):
+                    st.session_state.summary = summarize_transcript(
+                        st.session_state.transcript, st.session_state.selected_lang
+                    )
+                    st.session_state.summary_generated = True
+
+        if st.session_state.summary_generated and st.session_state.summary:
             st.subheader("🔹 Summary")
             st.write(st.session_state.summary)
 
-            # Quiz parameters
+        # 4) Quiz specification & generation
+        if st.session_state.summary_generated:
             grade = st.text_input("Student's grade level:", value="10")
             num_q = st.number_input("Number of questions:", min_value=1, max_value=20, value=5)
+            if not st.session_state.quiz_generated:
+                if st.button("Generate Quiz"):
+                    with st.spinner("Creating quiz…"):
+                        st.session_state.quiz = generate_quiz(
+                            st.session_state.summary,
+                            st.session_state.selected_lang,
+                            grade,
+                            int(num_q),
+                        )
+                        st.session_state.quiz_generated = True
 
-            # 4) Generate quiz button
-            if st.button("Generate Quiz"):
-                with st.spinner("Creating quiz…"):
-                    st.session_state.quiz = generate_quiz(
-                        st.session_state.summary,
-                        st.session_state.selected_lang,
-                        grade,
-                        int(num_q),
-                    )
-                    st.session_state.quiz_modified = False  # reset
-
-        # 5) Display quiz if available
-        if st.session_state.quiz:
+        # 5) Display quiz if generated
+        if st.session_state.quiz_generated and st.session_state.quiz:
             st.subheader("🔹 Quiz")
             st.write(st.session_state.quiz)
 
             # 6) Modification instructions UI
             st.markdown("**Modify the quiz (optional):**")
-            mod_instr = st.text_area(
+            st.session_state.mod_instructions = st.text_area(
                 "Enter modification instructions:",
                 value=st.session_state.mod_instructions,
                 key="mod_instructions",
@@ -308,14 +330,6 @@ if st.session_state.submitted and st.session_state.last_url:
                         )
                         if modified:
                             st.session_state.quiz = modified
-                            st.session_state.quiz_modified = True
-                            st.success("Quiz updated. Click 'Show Updated Quiz' to view.")
+                            st.success("Quiz updated.")
                 else:
                     st.warning("Please enter instructions to modify the quiz.")
-
-            # 8) Show updated quiz button (only visible after modification)
-            if st.session_state.quiz_modified:
-                if st.button("Show Updated Quiz"):
-                    st.subheader("🔹 Updated Quiz")
-                    st.write(st.session_state.quiz)
-                    st.session_state.quiz_modified = False  # reset so button hides
