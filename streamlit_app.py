@@ -45,6 +45,7 @@ defaults = {
     "summary": "",
     "quiz": "",
     "mod_instructions": "",
+    "quiz_modified": False,  # flag to indicate quiz was modified
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -226,6 +227,7 @@ if submit_button:
     st.session_state.summary = ""
     st.session_state.quiz = ""
     st.session_state.mod_instructions = ""
+    st.session_state.quiz_modified = False  # reset modification flag
 
 # Only proceed if form was submitted
 if st.session_state.submitted and st.session_state.last_url:
@@ -279,6 +281,7 @@ if st.session_state.submitted and st.session_state.last_url:
                         grade,
                         int(num_q),
                     )
+                    st.session_state.quiz_modified = False  # reset
 
         # 5) Display quiz if available
         if st.session_state.quiz:
@@ -287,14 +290,14 @@ if st.session_state.submitted and st.session_state.last_url:
 
             # 6) Modification instructions UI
             st.markdown("**Modify the quiz (optional):**")
-            # Use a keyed text_area so its value persists
             mod_instr = st.text_area(
                 "Enter modification instructions:",
                 value=st.session_state.mod_instructions,
                 key="mod_instructions",
                 height=120
             )
-            # When this button is clicked, we use st.session_state.mod_instructions directly
+
+            # 7) Apply modifications button
             if st.button("Apply Modifications"):
                 if st.session_state.mod_instructions.strip():
                     with st.spinner("Applying modifications…"):
@@ -305,6 +308,14 @@ if st.session_state.submitted and st.session_state.last_url:
                         )
                         if modified:
                             st.session_state.quiz = modified
-                            st.success("Quiz updated.")
+                            st.session_state.quiz_modified = True
+                            st.success("Quiz updated. Click 'Show Updated Quiz' to view.")
                 else:
                     st.warning("Please enter instructions to modify the quiz.")
+
+            # 8) Show updated quiz button (only visible after modification)
+            if st.session_state.quiz_modified:
+                if st.button("Show Updated Quiz"):
+                    st.subheader("🔹 Updated Quiz")
+                    st.write(st.session_state.quiz)
+                    st.session_state.quiz_modified = False  # reset so button hides
