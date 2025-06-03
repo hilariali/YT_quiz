@@ -301,7 +301,7 @@ def modify_quiz(existing_quiz: str, instructions: str, lang: str) -> str:
 # ------------------------------------------------------------------------------
 st.set_page_config(page_title="YouTube Quiz Generator", layout="wide")
 st.title("YouTube Quiz Generator 📚")
-st.title("(current beta version only support YouTube video contains caption))
+st.title("(current beta version only support YouTube video contains caption)")
 
 # --- Input Form for Mobile-friendly UI ---
 with st.form(key="input_form", clear_on_submit=False):
