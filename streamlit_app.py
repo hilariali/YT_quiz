@@ -28,6 +28,7 @@ CHUNK_SIZE = 100000   # characters per transcript chunk
 # Session state defaults
 # ------------------------------------------------------------------------------
 defaults = {
+    "page": "home",
     "last_url": "",
     "proxies": "",
     "submitted": False,
@@ -49,6 +50,50 @@ defaults = {
 for key, val in defaults.items():
     if key not in st.session_state:
         st.session_state[key] = val
+
+# ------------------------------------------------------------------------------
+# Landing home page and dummy tool pages
+# ------------------------------------------------------------------------------
+def home_page() -> None:
+    """Display landing page with logo and tool choices."""
+    st.set_page_config(page_title="AI Tools Hub", layout="wide")
+    try:
+        # Streamlit >= 1.32 supports ``use_container_width``
+        st.image(
+            "https://via.placeholder.com/600x150.png?text=LOGO+PLACEHOLDER",
+            use_container_width=True,
+        )
+    except TypeError:
+        # Fallback for older Streamlit versions
+        st.image(
+            "https://via.placeholder.com/600x150.png?text=LOGO+PLACEHOLDER",
+            use_column_width=True,
+        )
+    st.header("Select a tool")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("YouTube Quiz Generator"):
+            st.session_state.page = "quiz"
+            st.rerun()
+    with col2:
+        if st.button("Dummy Tool A"):
+            st.session_state.page = "dummy_a"
+            st.rerun()
+    with col3:
+        if st.button("Dummy Tool B"):
+            st.session_state.page = "dummy_b"
+            st.rerun()
+
+
+def dummy_tool_page(name: str) -> None:
+    """Simple placeholder for future tools."""
+    st.set_page_config(page_title=name, layout="wide")
+    if st.button("⬅️ Back to Home"):
+        st.session_state.page = "home"
+        st.rerun()
+
+    st.title(f"{name} (Coming Soon)")
+
 
 # ------------------------------------------------------------------------------
 # Utility functions
@@ -297,153 +342,173 @@ def modify_quiz(existing_quiz: str, instructions: str, lang: str) -> str:
 
 
 # ------------------------------------------------------------------------------
-# Streamlit UI
+# Quiz Generator UI wrapped in a function so it can be used as a tool page
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="YouTube Quiz Generator", layout="wide")
-st.title("YouTube Quiz Generator 📚")
-st.title("(current beta version only support YouTube video contains caption)")
+def quiz_generator_page() -> None:
+    st.set_page_config(page_title="YouTube Quiz Generator", layout="wide")
+    if st.button("⬅️ Back to Home"):
+        st.session_state.page = "home"
+        st.rerun()
 
-# --- Input Form for Mobile-friendly UI ---
-with st.form(key="input_form", clear_on_submit=False):
-    url_input = st.text_input(
-        "YouTube video URL:", value=st.session_state.last_url
-    )
-    proxy_input = st.text_input(
-        "Optional: HTTP(S) proxy URLs (comma-separated):",
-        value=st.session_state.proxies,
-    )
-    submit_button = st.form_submit_button(label="Load Video & Proxies")
+    st.title("YouTube Quiz Generator 📚")
+    st.title("(current beta version only support YouTube video contains caption)")
 
-if submit_button:
-    st.session_state.last_url = url_input.strip()
-    st.session_state.proxies = proxy_input.strip()
-    st.session_state.submitted = True
-    # Reset downstream state
-    st.session_state.video_id = get_video_id(st.session_state.last_url)
-    st.session_state.langs = {}
-    st.session_state.used_proxy_for_langs = None
-    st.session_state.selected_lang = ""
-    st.session_state.transcript = ""
-    st.session_state.used_proxy_for_transcript = None
-    st.session_state.transcript_fetched = False
-    st.session_state.summary = ""
-    st.session_state.summary_generated = False
-    st.session_state.quiz = ""
-    st.session_state.quiz_generated = False
-    st.session_state.mod_instructions = ""
-    st.session_state.updated_quiz = ""
-    st.session_state.updated_pending = False
-
-# Only proceed if form was submitted
-if st.session_state.submitted and st.session_state.last_url:
-    vid = st.session_state.video_id
-    proxy_list = parse_proxies(st.session_state.proxies)
-
-    # 1) List available languages (yt_dlp → API without proxy → API with proxy)
-    if not st.session_state.langs:
-        langs, used_proxy = list_transcript_languages(vid, proxy_list)
-        st.session_state.langs = langs
-        st.session_state.used_proxy_for_langs = used_proxy
-
-    if not st.session_state.langs:
-        st.error("No transcripts available—yt_dlp & API all failed, or IP blocked.")
-    else:
-        # Let user pick caption language
-        st.session_state.selected_lang = st.selectbox(
-            "Transcript language:", list(st.session_state.langs.keys()), index=0
+    # --- Input Form for Mobile-friendly UI ---
+    with st.form(key="input_form", clear_on_submit=False):
+        url_input = st.text_input(
+            "YouTube video URL:", value=st.session_state.last_url
         )
+        proxy_input = st.text_input(
+            "Optional: HTTP(S) proxy URLs (comma-separated):",
+            value=st.session_state.proxies,
+        )
+        submit_button = st.form_submit_button(label="Load Video & Proxies")
 
-        # 2) Show Transcript button
-        if not st.session_state.transcript_fetched:
-            if st.button("Show Transcript"):
-                text, used_proxy_trans = fetch_transcript_with_fallback(
-                    st.session_state.video_id,
-                    st.session_state.selected_lang,
-                    proxy_list,
+    if submit_button:
+        st.session_state.last_url = url_input.strip()
+        st.session_state.proxies = proxy_input.strip()
+        st.session_state.submitted = True
+        # Reset downstream state
+        st.session_state.video_id = get_video_id(st.session_state.last_url)
+        st.session_state.langs = {}
+        st.session_state.used_proxy_for_langs = None
+        st.session_state.selected_lang = ""
+        st.session_state.transcript = ""
+        st.session_state.used_proxy_for_transcript = None
+        st.session_state.transcript_fetched = False
+        st.session_state.summary = ""
+        st.session_state.summary_generated = False
+        st.session_state.quiz = ""
+        st.session_state.quiz_generated = False
+        st.session_state.mod_instructions = ""
+        st.session_state.updated_quiz = ""
+        st.session_state.updated_pending = False
+
+    # Only proceed if form was submitted
+    if st.session_state.submitted and st.session_state.last_url:
+        vid = st.session_state.video_id
+        proxy_list = parse_proxies(st.session_state.proxies)
+
+        # 1) List available languages (yt_dlp → API without proxy → API with proxy)
+        if not st.session_state.langs:
+            langs, used_proxy = list_transcript_languages(vid, proxy_list)
+            st.session_state.langs = langs
+            st.session_state.used_proxy_for_langs = used_proxy
+
+        if not st.session_state.langs:
+            st.error("No transcripts available—yt_dlp & API all failed, or IP blocked.")
+        else:
+            # Let user pick caption language
+            st.session_state.selected_lang = st.selectbox(
+                "Transcript language:", list(st.session_state.langs.keys()), index=0
+            )
+
+            # 2) Show Transcript button
+            if not st.session_state.transcript_fetched:
+                if st.button("Show Transcript"):
+                    text, used_proxy_trans = fetch_transcript_with_fallback(
+                        st.session_state.video_id,
+                        st.session_state.selected_lang,
+                        proxy_list,
+                    )
+                    st.session_state.transcript = text
+                    st.session_state.used_proxy_for_transcript = used_proxy_trans
+                    if not text:
+                        st.error("Failed to fetch transcript—yt_dlp & API all failed.")
+                    else:
+                        st.session_state.transcript_fetched = True
+
+            # 3) Display transcript once fetched
+            if st.session_state.transcript_fetched and st.session_state.transcript:
+                st.subheader("🔹 Transcript")
+                st.text_area(
+                    "Transcript text:",
+                    value=st.session_state.transcript,
+                    height=200,
+                    disabled=True
                 )
-                st.session_state.transcript = text
-                st.session_state.used_proxy_for_transcript = used_proxy_trans
-                if not text:
-                    st.error("Failed to fetch transcript—yt_dlp & API all failed.")
-                else:
-                    st.session_state.transcript_fetched = True
 
-        # 3) Display transcript once fetched
-        if st.session_state.transcript_fetched and st.session_state.transcript:
-            st.subheader("🔹 Transcript")
-            st.text_area(
-                "Transcript text:",
-                value=st.session_state.transcript,
-                height=200,
-                disabled=True
-            )
+                # 4) Generate summary button
+                if not st.session_state.summary_generated:
+                    if st.button("Generate Summary"):
+                        with st.spinner("Summarizing transcript…"):
+                            st.session_state.summary = summarize_transcript(
+                                st.session_state.transcript, st.session_state.selected_lang
+                            )
+                            st.session_state.summary_generated = True
 
-            # 4) Generate summary button
-            if not st.session_state.summary_generated:
-                if st.button("Generate Summary"):
-                    with st.spinner("Summarizing transcript…"):
-                        st.session_state.summary = summarize_transcript(
-                            st.session_state.transcript, st.session_state.selected_lang
-                        )
-                        st.session_state.summary_generated = True
+            # 5) Display summary if generated
+            if st.session_state.summary_generated and st.session_state.summary:
+                st.subheader("🔹 Summary")
+                st.write(st.session_state.summary)
 
-        # 5) Display summary if generated
-        if st.session_state.summary_generated and st.session_state.summary:
-            st.subheader("🔹 Summary")
-            st.write(st.session_state.summary)
+                # 6) Quiz specification & generation
+                grade = st.text_input("Student's grade level:", value="10")
+                num_q = st.number_input(
+                    "Number of questions:", min_value=1, max_value=20, value=5
+                )
+                if not st.session_state.quiz_generated:
+                    if st.button("Generate Quiz"):
+                        with st.spinner("Creating quiz…"):
+                            st.session_state.quiz = generate_quiz(
+                                st.session_state.summary,
+                                st.session_state.selected_lang,
+                                grade,
+                                int(num_q),
+                            )
+                            st.session_state.quiz_generated = True
 
-            # 6) Quiz specification & generation
-            grade = st.text_input("Student's grade level:", value="10")
-            num_q = st.number_input(
-                "Number of questions:", min_value=1, max_value=20, value=5
-            )
-            if not st.session_state.quiz_generated:
-                if st.button("Generate Quiz"):
-                    with st.spinner("Creating quiz…"):
-                        st.session_state.quiz = generate_quiz(
-                            st.session_state.summary,
-                            st.session_state.selected_lang,
-                            grade,
-                            int(num_q),
-                        )
-                        st.session_state.quiz_generated = True
+            # 7) Display quiz if generated
+            if st.session_state.quiz_generated and st.session_state.quiz:
+                st.subheader("🔹 Quiz")
+                st.write(st.session_state.quiz)
 
-        # 7) Display quiz if generated
-        if st.session_state.quiz_generated and st.session_state.quiz:
-            st.subheader("🔹 Quiz")
-            st.write(st.session_state.quiz)
+                # 8) Modification instructions UI
+                st.markdown("**Modify the quiz (optional):**")
+                _ = st.text_area(
+                    "Enter modification instructions:",
+                    value=st.session_state.mod_instructions,
+                    key="mod_instructions",
+                    height=120
+                )
 
-            # 8) Modification instructions UI
-            st.markdown("**Modify the quiz (optional):**")
-            _ = st.text_area(
-                "Enter modification instructions:",
-                value=st.session_state.mod_instructions,
-                key="mod_instructions",
-                height=120
-            )
+                # 9) Apply modifications button
+                if st.button("Apply Modifications"):
+                    instructions = st.session_state.mod_instructions
+                    if instructions.strip():
+                        with st.spinner("Applying modifications…"):
+                            modified = modify_quiz(
+                                st.session_state.quiz,
+                                instructions,
+                                st.session_state.selected_lang
+                            )
+                            if modified:
+                                st.session_state.updated_quiz = modified
+                                st.session_state.updated_pending = True
+                                st.success("Modifications ready. Click 'Show Updated Quiz' to view.")
+                    else:
+                        st.warning("Please enter instructions to modify the quiz.")
 
-            # 9) Apply modifications button
-            if st.button("Apply Modifications"):
-                instructions = st.session_state.mod_instructions
-                if instructions.strip():
-                    with st.spinner("Applying modifications…"):
-                        modified = modify_quiz(
-                            st.session_state.quiz,
-                            instructions,
-                            st.session_state.selected_lang
-                        )
-                        if modified:
-                            st.session_state.updated_quiz = modified
-                            st.session_state.updated_pending = True
-                            st.success("Modifications ready. Click 'Show Updated Quiz' to view.")
-                else:
-                    st.warning("Please enter instructions to modify the quiz.")
+                # 10) Show Updated Quiz button
+                if st.session_state.updated_pending:
+                    if st.button("Show Updated Quiz"):
+                        st.session_state.quiz = st.session_state.updated_quiz
+                        st.session_state.updated_pending = False
+                        st.success("Displaying updated quiz below.")
+                        st.subheader("🔹 Quiz (Updated)")
+                        st.write(st.session_state.quiz)
 
-            # 10) Show Updated Quiz button
-            if st.session_state.updated_pending:
-                if st.button("Show Updated Quiz"):
-                    st.session_state.quiz = st.session_state.updated_quiz
-                    st.session_state.updated_pending = False
-                    st.success("Displaying updated quiz below.")
-                    st.subheader("🔹 Quiz (Updated)")
-                    st.write(st.session_state.quiz)
+
+# ------------------------------------------------------------------------------
+# Page router
+# ------------------------------------------------------------------------------
+if st.session_state.get("page") == "quiz":
+    quiz_generator_page()
+elif st.session_state.get("page") == "dummy_a":
+    dummy_tool_page("Dummy Tool A")
+elif st.session_state.get("page") == "dummy_b":
+    dummy_tool_page("Dummy Tool B")
+else:
+    home_page()
+
+
