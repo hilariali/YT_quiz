@@ -57,10 +57,18 @@ for key, val in defaults.items():
 def home_page() -> None:
     """Display landing page with logo and tool choices."""
     st.set_page_config(page_title="AI Tools Hub", layout="wide")
-    st.image(
-        "https://via.placeholder.com/600x150.png?text=LOGO+PLACEHOLDER",
-
-        use_container_width=True,
+    try:
+        # Streamlit >= 1.32 supports ``use_container_width``
+        st.image(
+            "https://via.placeholder.com/600x150.png?text=LOGO+PLACEHOLDER",
+            use_container_width=True,
+        )
+    except TypeError:
+        # Fallback for older Streamlit versions
+        st.image(
+            "https://via.placeholder.com/600x150.png?text=LOGO+PLACEHOLDER",
+            use_column_width=True,
+        )
 
         use_column_width=True,
 
