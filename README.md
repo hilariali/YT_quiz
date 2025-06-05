@@ -1,6 +1,6 @@
-# YouTube Quiz Generator
+# AI Tools Hub
 
-A Streamlit app that takes a YouTube video URL, fetches its transcript, summarizes it via OpenAI, and generates a multiple-choice quiz.
+This Streamlit app opens with a simple landing page displaying a placeholder logo and buttons for each available tool. The main tool is the **YouTube Quiz Generator**, which fetches a video's transcript, summarizes it with OpenAI, and creates a multiple-choice quiz. Every tool page includes a **Back to Home** button so you can easily return to the landing page.
 
 ## Setup
 
