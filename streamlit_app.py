@@ -59,22 +59,22 @@ def home_page() -> None:
     st.set_page_config(page_title="AI Tools Hub", layout="wide")
     st.image(
         "https://via.placeholder.com/600x150.png?text=LOGO+PLACEHOLDER",
-        use_column_width=True,
+        use_container_width=True,
     )
     st.header("Select a tool")
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("YouTube Quiz Generator"):
             st.session_state.page = "quiz"
-            st.experimental_rerun()
+            st.rerun()
     with col2:
         if st.button("Dummy Tool A"):
             st.session_state.page = "dummy_a"
-            st.experimental_rerun()
+            st.rerun()
     with col3:
         if st.button("Dummy Tool B"):
             st.session_state.page = "dummy_b"
-            st.experimental_rerun()
+            st.rerun()
 
 
 def dummy_tool_page(name: str) -> None:
@@ -82,7 +82,7 @@ def dummy_tool_page(name: str) -> None:
     st.set_page_config(page_title=name, layout="wide")
     if st.button("⬅️ Back to Home"):
         st.session_state.page = "home"
-        st.experimental_rerun()
+        st.rerun()
 
     st.title(f"{name} (Coming Soon)")
 
@@ -340,7 +340,7 @@ def quiz_generator_page() -> None:
     st.set_page_config(page_title="YouTube Quiz Generator", layout="wide")
     if st.button("⬅️ Back to Home"):
         st.session_state.page = "home"
-        st.experimental_rerun()
+        st.rerun()
 
     st.title("YouTube Quiz Generator 📚")
     st.title("(current beta version only support YouTube video contains caption)")
