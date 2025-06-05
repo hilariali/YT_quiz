@@ -57,6 +57,20 @@ for key, val in defaults.items():
 def home_page() -> None:
     """Display landing page with logo and tool choices."""
     st.set_page_config(page_title="AI Tools Hub", layout="wide")
+
+    try:
+        # Streamlit >= 1.32 supports ``use_container_width``
+        st.image(
+            "https://via.placeholder.com/600x150.png?text=LOGO+PLACEHOLDER",
+            use_container_width=True,
+        )
+    except TypeError:
+        # Fallback for older Streamlit versions
+        st.image(
+            "https://via.placeholder.com/600x150.png?text=LOGO+PLACEHOLDER",
+            use_column_width=True,
+        )
+
     st.image(
         "https://via.placeholder.com/600x150.png?text=LOGO+PLACEHOLDER",
 
@@ -65,6 +79,7 @@ def home_page() -> None:
         use_column_width=True,
 
     )
+
     st.header("Select a tool")
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -81,6 +96,7 @@ def home_page() -> None:
             st.session_state.page = "dummy_b"
             st.rerun()
 
+
             st.experimental_rerun()
     with col2:
         if st.button("Dummy Tool A"):
@@ -93,6 +109,7 @@ def home_page() -> None:
 
 
 
+
 def dummy_tool_page(name: str) -> None:
     """Simple placeholder for future tools."""
     st.set_page_config(page_title=name, layout="wide")
@@ -101,7 +118,12 @@ def dummy_tool_page(name: str) -> None:
 
         st.rerun()
 
+
+
+        st.rerun()
+
         st.experimental_rerun()
+
 
 
     st.title(f"{name} (Coming Soon)")
@@ -363,7 +385,12 @@ def quiz_generator_page() -> None:
 
         st.rerun()
 
+
+
+        st.rerun()
+
         st.experimental_rerun()
+
 
 
     st.title("YouTube Quiz Generator 📚")
@@ -373,11 +400,19 @@ def quiz_generator_page() -> None:
     with st.form(key="input_form", clear_on_submit=False):
         url_input = st.text_input(
             "YouTube video URL:", value=st.session_state.last_url
+
         )
         proxy_input = st.text_input(
             "Optional: HTTP(S) proxy URLs (comma-separated):",
             value=st.session_state.proxies,
         )
+
+        )
+        proxy_input = st.text_input(
+            "Optional: HTTP(S) proxy URLs (comma-separated):",
+            value=st.session_state.proxies,
+        )
+
         submit_button = st.form_submit_button(label="Load Video & Proxies")
 
     if submit_button:
