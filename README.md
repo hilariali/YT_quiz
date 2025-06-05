@@ -1,6 +1,15 @@
 # AI Tools Hub
 
+
 This Streamlit app opens with a simple landing page displaying a placeholder logo and buttons for each available tool. The main tool is the **YouTube Quiz Generator**, which fetches a video's transcript, summarizes it with OpenAI, and creates a multiple-choice quiz. Every tool page includes a **Back to Home** button so you can easily return to the landing page.
+
+
+
+This Streamlit app now starts with a simple landing page that lets you select from multiple tools. The main tool is the **YouTube Quiz Generator** which takes a YouTube video URL, fetches its transcript, summarizes it via OpenAI, and generates a multiple-choice quiz. Each tool page provides a button to return to the home screen.
+
+
+
+
 
 ## Setup
 
