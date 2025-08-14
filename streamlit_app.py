@@ -4,6 +4,9 @@ import openai
 import traceback
 import requests
 import yt_dlp
+import os
+import glob
+import string
 
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
@@ -45,6 +48,11 @@ defaults = {
     "mod_instructions": "",
     "updated_quiz": "",
     "updated_pending": False,
+    # Download-specific state
+    "download_url": "",
+    "download_video_id": "",
+    "download_formats": [],
+    "download_submitted": False,
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -297,153 +305,369 @@ def modify_quiz(existing_quiz: str, instructions: str, lang: str) -> str:
 
 
 # ------------------------------------------------------------------------------
-# Streamlit UI
+# Video Download Functions
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="YouTube Quiz Generator", layout="wide")
-st.title("YouTube Quiz Generator 📚")
-st.title("(current beta version only support YouTube video contains caption)")
+def get_video_formats(video_id: str) -> list[dict]:
+    """
+    Get available video formats for download using yt_dlp.
+    Returns a list of format dictionaries.
+    """
+    try:
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+            
+            formats = []
+            seen_formats = set()
+            
+            for fmt in info.get("formats", []):
+                if fmt.get("vcodec") != "none" and fmt.get("acodec") != "none":  # Video with audio
+                    height = fmt.get("height")
+                    ext = fmt.get("ext", "mp4")
+                    filesize = fmt.get("filesize")
+                    format_note = fmt.get("format_note", "")
+                    
+                    if height and height not in seen_formats:
+                        seen_formats.add(height)
+                        size_mb = f" (~{filesize // (1024*1024)} MB)" if filesize else ""
+                        formats.append({
+                            "format_id": fmt.get("format_id"),
+                            "height": height,
+                            "ext": ext,
+                            "description": f"{height}p {format_note} (.{ext}){size_mb}",
+                            "filesize": filesize
+                        })
+            
+            # Sort by quality (height) descending
+            formats.sort(key=lambda x: x["height"], reverse=True)
+            
+            # Add audio-only option
+            audio_formats = [fmt for fmt in info.get("formats", []) if fmt.get("vcodec") == "none" and fmt.get("acodec") != "none"]
+            if audio_formats:
+                best_audio = max(audio_formats, key=lambda x: x.get("abr", 0))
+                formats.append({
+                    "format_id": best_audio.get("format_id"),
+                    "height": 0,  # Use 0 for audio
+                    "ext": best_audio.get("ext", "m4a"),
+                    "description": f"Audio Only (.{best_audio.get('ext', 'm4a')})",
+                    "filesize": best_audio.get("filesize")
+                })
+            
+            return formats
+    except Exception as e:
+        st.error(f"Error getting video formats: {e}")
+        return []
 
-# --- Input Form for Mobile-friendly UI ---
-with st.form(key="input_form", clear_on_submit=False):
-    url_input = st.text_input(
-        "YouTube video URL:", value=st.session_state.last_url
-    )
-    proxy_input = st.text_input(
-        "Optional: HTTP(S) proxy URLs (comma-separated):",
-        value=st.session_state.proxies,
-    )
-    submit_button = st.form_submit_button(label="Load Video & Proxies")
 
-if submit_button:
-    st.session_state.last_url = url_input.strip()
-    st.session_state.proxies = proxy_input.strip()
-    st.session_state.submitted = True
-    # Reset downstream state
-    st.session_state.video_id = get_video_id(st.session_state.last_url)
-    st.session_state.langs = {}
-    st.session_state.used_proxy_for_langs = None
-    st.session_state.selected_lang = ""
-    st.session_state.transcript = ""
-    st.session_state.used_proxy_for_transcript = None
-    st.session_state.transcript_fetched = False
-    st.session_state.summary = ""
-    st.session_state.summary_generated = False
-    st.session_state.quiz = ""
-    st.session_state.quiz_generated = False
-    st.session_state.mod_instructions = ""
-    st.session_state.updated_quiz = ""
-    st.session_state.updated_pending = False
+def download_video(video_id: str, format_id: str, output_path: str = "/tmp") -> str:
+    """
+    Download video using yt_dlp with specified format.
+    Returns the path to the downloaded file or empty string if failed.
+    """
+    try:
+        # Clean filename
+        ydl_opts_info = {
+            "quiet": True,
+            "no_warnings": True,
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+            title = info.get("title", video_id)
+            # Clean title for filename
+            valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
+            clean_title = ''.join(c for c in title if c in valid_chars)
+            clean_title = clean_title[:50]  # Limit length
+        
+        ydl_opts = {
+            "format": format_id,
+            "outtmpl": f"{output_path}/{clean_title}_%(height)sp.%(ext)s",
+            "quiet": True,
+            "no_warnings": True,
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+            
+            # Find the downloaded file
+            pattern = f"{output_path}/{clean_title}_*.*"
+            files = glob.glob(pattern)
+            if files:
+                return files[0]  # Return the first match
+                
+        return ""
+    except Exception as e:
+        st.error(f"Download error: {e}")
+        return ""
 
-# Only proceed if form was submitted
-if st.session_state.submitted and st.session_state.last_url:
-    vid = st.session_state.video_id
-    proxy_list = parse_proxies(st.session_state.proxies)
 
-    # 1) List available languages (yt_dlp → API without proxy → API with proxy)
-    if not st.session_state.langs:
-        langs, used_proxy = list_transcript_languages(vid, proxy_list)
-        st.session_state.langs = langs
-        st.session_state.used_proxy_for_langs = used_proxy
+# ------------------------------------------------------------------------------
+# Page Functions
+# ------------------------------------------------------------------------------
+def quiz_generator_page():
+    """The original quiz generator functionality"""
+    st.title("YouTube Quiz Generator 📚")
+    st.title("(current beta version only support YouTube video contains caption)")
 
-    if not st.session_state.langs:
-        st.error("No transcripts available—yt_dlp & API all failed, or IP blocked.")
-    else:
-        # Let user pick caption language
-        st.session_state.selected_lang = st.selectbox(
-            "Transcript language:", list(st.session_state.langs.keys()), index=0
+    # --- Input Form for Mobile-friendly UI ---
+    with st.form(key="input_form", clear_on_submit=False):
+        url_input = st.text_input(
+            "YouTube video URL:", value=st.session_state.last_url
         )
+        proxy_input = st.text_input(
+            "Optional: HTTP(S) proxy URLs (comma-separated):",
+            value=st.session_state.proxies,
+        )
+        submit_button = st.form_submit_button(label="Load Video & Proxies")
 
-        # 2) Show Transcript button
-        if not st.session_state.transcript_fetched:
-            if st.button("Show Transcript"):
-                text, used_proxy_trans = fetch_transcript_with_fallback(
-                    st.session_state.video_id,
-                    st.session_state.selected_lang,
-                    proxy_list,
+    if submit_button:
+        st.session_state.last_url = url_input.strip()
+        st.session_state.proxies = proxy_input.strip()
+        st.session_state.submitted = True
+        # Reset downstream state
+        st.session_state.video_id = get_video_id(st.session_state.last_url)
+        st.session_state.langs = {}
+        st.session_state.used_proxy_for_langs = None
+        st.session_state.selected_lang = ""
+        st.session_state.transcript = ""
+        st.session_state.used_proxy_for_transcript = None
+        st.session_state.transcript_fetched = False
+        st.session_state.summary = ""
+        st.session_state.summary_generated = False
+        st.session_state.quiz = ""
+        st.session_state.quiz_generated = False
+        st.session_state.mod_instructions = ""
+        st.session_state.updated_quiz = ""
+        st.session_state.updated_pending = False
+
+    # Only proceed if form was submitted
+    if st.session_state.submitted and st.session_state.last_url:
+        vid = st.session_state.video_id
+        proxy_list = parse_proxies(st.session_state.proxies)
+
+        # 1) List available languages (yt_dlp → API without proxy → API with proxy)
+        if not st.session_state.langs:
+            langs, used_proxy = list_transcript_languages(vid, proxy_list)
+            st.session_state.langs = langs
+            st.session_state.used_proxy_for_langs = used_proxy
+
+        if not st.session_state.langs:
+            st.error("No transcripts available—yt_dlp & API all failed, or IP blocked.")
+        else:
+            # Let user pick caption language
+            st.session_state.selected_lang = st.selectbox(
+                "Transcript language:", list(st.session_state.langs.keys()), index=0
+            )
+
+            # 2) Show Transcript button
+            if not st.session_state.transcript_fetched:
+                if st.button("Show Transcript"):
+                    text, used_proxy_trans = fetch_transcript_with_fallback(
+                        st.session_state.video_id,
+                        st.session_state.selected_lang,
+                        proxy_list,
+                    )
+                    st.session_state.transcript = text
+                    st.session_state.used_proxy_for_transcript = used_proxy_trans
+                    if not text:
+                        st.error("Failed to fetch transcript—yt_dlp & API all failed.")
+                    else:
+                        st.session_state.transcript_fetched = True
+
+            # 3) Display transcript once fetched
+            if st.session_state.transcript_fetched and st.session_state.transcript:
+                st.subheader("🔹 Transcript")
+                st.text_area(
+                    "Transcript text:",
+                    value=st.session_state.transcript,
+                    height=200,
+                    disabled=True
                 )
-                st.session_state.transcript = text
-                st.session_state.used_proxy_for_transcript = used_proxy_trans
-                if not text:
-                    st.error("Failed to fetch transcript—yt_dlp & API all failed.")
+
+                # 4) Generate summary button
+                if not st.session_state.summary_generated:
+                    if st.button("Generate Summary"):
+                        with st.spinner("Summarizing transcript…"):
+                            st.session_state.summary = summarize_transcript(
+                                st.session_state.transcript, st.session_state.selected_lang
+                            )
+                            st.session_state.summary_generated = True
+
+            # 5) Display summary if generated
+            if st.session_state.summary_generated and st.session_state.summary:
+                st.subheader("🔹 Summary")
+                st.write(st.session_state.summary)
+
+                # 6) Quiz specification & generation
+                grade = st.text_input("Student's grade level:", value="10")
+                num_q = st.number_input(
+                    "Number of questions:", min_value=1, max_value=20, value=5
+                )
+                if not st.session_state.quiz_generated:
+                    if st.button("Generate Quiz"):
+                        with st.spinner("Creating quiz…"):
+                            st.session_state.quiz = generate_quiz(
+                                st.session_state.summary,
+                                st.session_state.selected_lang,
+                                grade,
+                                int(num_q),
+                            )
+                            st.session_state.quiz_generated = True
+
+            # 7) Display quiz if generated
+            if st.session_state.quiz_generated and st.session_state.quiz:
+                st.subheader("🔹 Quiz")
+                st.write(st.session_state.quiz)
+
+                # 8) Modification instructions UI
+                st.markdown("**Modify the quiz (optional):**")
+                _ = st.text_area(
+                    "Enter modification instructions:",
+                    value=st.session_state.mod_instructions,
+                    key="mod_instructions",
+                    height=120
+                )
+
+                # 9) Apply modifications button
+                if st.button("Apply Modifications"):
+                    instructions = st.session_state.mod_instructions
+                    if instructions.strip():
+                        with st.spinner("Applying modifications…"):
+                            modified = modify_quiz(
+                                st.session_state.quiz,
+                                instructions,
+                                st.session_state.selected_lang
+                            )
+                            if modified:
+                                st.session_state.updated_quiz = modified
+                                st.session_state.updated_pending = True
+                                st.success("Modifications ready. Click 'Show Updated Quiz' to view.")
+                    else:
+                        st.warning("Please enter instructions to modify the quiz.")
+
+                # 10) Show Updated Quiz button
+                if st.session_state.updated_pending:
+                    if st.button("Show Updated Quiz"):
+                        st.session_state.quiz = st.session_state.updated_quiz
+                        st.session_state.updated_pending = False
+                        st.success("Displaying updated quiz below.")
+                        st.subheader("🔹 Quiz (Updated)")
+                        st.write(st.session_state.quiz)
+
+
+def video_download_page():
+    """YouTube Video Download functionality"""
+    st.title("YouTube Video Downloader 📥")
+    st.write("Download YouTube videos in various qualities and formats.")
+    
+    # URL input form
+    with st.form(key="download_form", clear_on_submit=False):
+        url_input = st.text_input(
+            "YouTube video URL:", 
+            value=st.session_state.download_url,
+            placeholder="https://www.youtube.com/watch?v=..."
+        )
+        submit_button = st.form_submit_button(label="Get Video Formats")
+    
+    if submit_button and url_input.strip():
+        st.session_state.download_url = url_input.strip()
+        st.session_state.download_video_id = get_video_id(st.session_state.download_url)
+        st.session_state.download_submitted = True
+        
+        # Fetch available formats
+        with st.spinner("Fetching available video formats..."):
+            st.session_state.download_formats = get_video_formats(st.session_state.download_video_id)
+    
+    # Display formats and download options
+    if st.session_state.download_submitted and st.session_state.download_formats:
+        st.subheader("🔹 Available Formats")
+        
+        # Create format options for selectbox
+        format_options = []
+        format_mapping = {}
+        
+        for fmt in st.session_state.download_formats:
+            option_text = fmt["description"]
+            format_options.append(option_text)
+            format_mapping[option_text] = fmt["format_id"]
+        
+        # Format selection
+        selected_format = st.selectbox(
+            "Choose format to download:",
+            format_options,
+            index=0
+        )
+        
+        # Download button
+        if st.button("Download Video", type="primary"):
+            selected_format_id = format_mapping[selected_format]
+            
+            with st.spinner("Downloading video... This may take a few minutes."):
+                download_path = download_video(
+                    st.session_state.download_video_id, 
+                    selected_format_id
+                )
+                
+                if download_path:
+                    st.success("✅ Download completed!")
+                    
+                    # Provide download link
+                    with open(download_path, "rb") as file:
+                        file_data = file.read()
+                        filename = download_path.split("/")[-1]
+                        
+                        st.download_button(
+                            label=f"📁 Download {filename}",
+                            data=file_data,
+                            file_name=filename,
+                            mime="video/mp4"
+                        )
+                    
+                    # Clean up the temporary file after a delay
+                    try:
+                        os.remove(download_path)
+                    except:
+                        pass  # File cleanup is optional
+                        
                 else:
-                    st.session_state.transcript_fetched = True
+                    st.error("❌ Download failed. Please try again or choose a different format.")
+    
+    elif st.session_state.download_submitted and not st.session_state.download_formats:
+        st.error("❌ Unable to fetch video formats. Please check the URL and try again.")
+    
+    # Add some helpful information
+    with st.expander("ℹ️ Download Information"):
+        st.markdown("""
+        **Supported formats:**
+        - Various video qualities (1080p, 720p, 480p, etc.)
+        - Audio-only downloads
+        - Different file formats (MP4, WebM, etc.)
+        
+        **Notes:**
+        - Download time depends on video length and your internet connection
+        - Larger files (higher quality) take longer to download
+        - Files are temporarily stored and automatically cleaned up
+        - Make sure you have permission to download the content
+        """)
 
-        # 3) Display transcript once fetched
-        if st.session_state.transcript_fetched and st.session_state.transcript:
-            st.subheader("🔹 Transcript")
-            st.text_area(
-                "Transcript text:",
-                value=st.session_state.transcript,
-                height=200,
-                disabled=True
-            )
 
-            # 4) Generate summary button
-            if not st.session_state.summary_generated:
-                if st.button("Generate Summary"):
-                    with st.spinner("Summarizing transcript…"):
-                        st.session_state.summary = summarize_transcript(
-                            st.session_state.transcript, st.session_state.selected_lang
-                        )
-                        st.session_state.summary_generated = True
+# ------------------------------------------------------------------------------
+# Main App
+# ------------------------------------------------------------------------------
+st.set_page_config(page_title="YouTube Tools", layout="wide")
 
-        # 5) Display summary if generated
-        if st.session_state.summary_generated and st.session_state.summary:
-            st.subheader("🔹 Summary")
-            st.write(st.session_state.summary)
+# Sidebar navigation
+st.sidebar.title("Navigation")
+page = st.sidebar.radio(
+    "Choose a tool:",
+    ["Quiz Generator", "Video Downloader"]
+)
 
-            # 6) Quiz specification & generation
-            grade = st.text_input("Student's grade level:", value="10")
-            num_q = st.number_input(
-                "Number of questions:", min_value=1, max_value=20, value=5
-            )
-            if not st.session_state.quiz_generated:
-                if st.button("Generate Quiz"):
-                    with st.spinner("Creating quiz…"):
-                        st.session_state.quiz = generate_quiz(
-                            st.session_state.summary,
-                            st.session_state.selected_lang,
-                            grade,
-                            int(num_q),
-                        )
-                        st.session_state.quiz_generated = True
-
-        # 7) Display quiz if generated
-        if st.session_state.quiz_generated and st.session_state.quiz:
-            st.subheader("🔹 Quiz")
-            st.write(st.session_state.quiz)
-
-            # 8) Modification instructions UI
-            st.markdown("**Modify the quiz (optional):**")
-            _ = st.text_area(
-                "Enter modification instructions:",
-                value=st.session_state.mod_instructions,
-                key="mod_instructions",
-                height=120
-            )
-
-            # 9) Apply modifications button
-            if st.button("Apply Modifications"):
-                instructions = st.session_state.mod_instructions
-                if instructions.strip():
-                    with st.spinner("Applying modifications…"):
-                        modified = modify_quiz(
-                            st.session_state.quiz,
-                            instructions,
-                            st.session_state.selected_lang
-                        )
-                        if modified:
-                            st.session_state.updated_quiz = modified
-                            st.session_state.updated_pending = True
-                            st.success("Modifications ready. Click 'Show Updated Quiz' to view.")
-                else:
-                    st.warning("Please enter instructions to modify the quiz.")
-
-            # 10) Show Updated Quiz button
-            if st.session_state.updated_pending:
-                if st.button("Show Updated Quiz"):
-                    st.session_state.quiz = st.session_state.updated_quiz
-                    st.session_state.updated_pending = False
-                    st.success("Displaying updated quiz below.")
-                    st.subheader("🔹 Quiz (Updated)")
-                    st.write(st.session_state.quiz)
+# Page routing
+if page == "Quiz Generator":
+    quiz_generator_page()
+elif page == "Video Downloader":
+    video_download_page()
