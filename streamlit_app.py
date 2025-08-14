@@ -369,9 +369,14 @@ def get_video_formats(video_id: str) -> list[dict]:
             audio_formats = [fmt for fmt in info.get("formats", []) if fmt.get("vcodec") == "none" and fmt.get("acodec") != "none"]
             if audio_formats:
                 # Filter out formats with None abr values before finding the best one
-                valid_audio_formats = [fmt for fmt in audio_formats if fmt.get("abr") is not None]
+                valid_audio_formats = [fmt for fmt in audio_formats if fmt.get("abr") is not None and isinstance(fmt.get("abr"), (int, float))]
                 if valid_audio_formats:
-                    best_audio = max(valid_audio_formats, key=lambda x: x.get("abr", 0))
+                    # Use safe comparison for abr values
+                    def safe_get_abr(fmt):
+                        abr = fmt.get("abr", 0)
+                        return abr if abr is not None and isinstance(abr, (int, float)) else 0
+                    
+                    best_audio = max(valid_audio_formats, key=safe_get_abr)
                 else:
                     # Fallback to first audio format if no valid abr values
                     best_audio = audio_formats[0]
@@ -455,7 +460,15 @@ def download_video(video_id: str, format_id: str, output_path: str = "/tmp") -> 
             files = glob.glob(pattern)
             if files:
                 # Return the most recently created file if multiple matches
-                return max(files, key=os.path.getctime)
+                # Use safe file time comparison that handles None values
+                def safe_getctime(filepath):
+                    try:
+                        ctime = os.path.getctime(filepath)
+                        return ctime if ctime is not None else 0
+                    except (OSError, AttributeError):
+                        return 0
+                
+                return max(files, key=safe_getctime)
                 
         return ""
     except yt_dlp.utils.DownloadError as e:

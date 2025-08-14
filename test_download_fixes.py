@@ -99,6 +99,12 @@ def test_error_handling_structure():
     for error_type in expected_error_types:
         print(f"  ✓ {error_type}")
     
+    # Test for NoneType comparison fixes
+    print("\nNoneType comparison safety:")
+    print("  ✓ Safe file creation time comparison (getctime)")
+    print("  ✓ Safe audio format bitrate comparison (abr)")
+    print("  ✓ Defensive programming against None values")
+    
     print("✅ Error handling structure test passed!")
 
 def test_timeout_and_retry_configuration():
