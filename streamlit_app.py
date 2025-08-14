@@ -53,6 +53,8 @@ defaults = {
     "download_video_id": "",
     "download_formats": [],
     "download_submitted": False,
+    "download_cookie_option": "none",
+    "download_cookie_file": None,
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -352,47 +354,119 @@ def modify_quiz(existing_quiz: str, instructions: str, lang: str) -> str:
 # ------------------------------------------------------------------------------
 # Video Download Functions
 # ------------------------------------------------------------------------------
-def get_video_formats(video_id: str) -> list[dict]:
+
+def get_cookie_options():
     """
-    Get available video formats for download using yt_dlp.
-    Returns a list of format dictionaries with enhanced 403 error handling.
+    Get available browser cookie options for yt-dlp.
+    Returns a list of supported browsers.
     """
-    # List of user agents to rotate through for better success rate
+    return [
+        "none",  # No cookies
+        "chrome", 
+        "firefox", 
+        "edge", 
+        "safari", 
+        "opera",
+        "chromium"
+    ]
+
+def create_enhanced_ydl_opts(video_id: str, use_cookies: str = "none", cookie_file: str = None, format_selector: str = "best"):
+    """
+    Create enhanced yt-dlp options with sophisticated anti-detection measures.
+    
+    Args:
+        video_id: YouTube video ID
+        use_cookies: Browser to extract cookies from ("none", "chrome", "firefox", etc.)
+        cookie_file: Path to cookie file (optional)
+        format_selector: Format selection string
+    
+    Returns:
+        dict: yt-dlp options dictionary
+    """
+    # More sophisticated and current user agents that are less likely to be detected
     user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", 
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
     ]
     
     import random
     selected_user_agent = random.choice(user_agents)
     
-    # Primary configuration with enhanced 403 error mitigation
+    # Base configuration with enhanced headers that mimic real browsers more closely
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "socket_timeout": 30,
+        "retries": 3,
+        "format": format_selector,
+        
+        # Enhanced user agent
+        "user_agent": selected_user_agent,
+        
+        # More comprehensive HTTP headers to mimic real browser behavior
+        "http_headers": {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "DNT": "1",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate", 
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"'
+        },
+        
+        # Enhanced extractor arguments for better compatibility
+        "extractor_args": {
+            "youtube": {
+                "skip": ["hls", "dash"],  # Skip potentially restricted formats initially
+                "player_skip": ["configs"],  # Skip some player configurations
+                "player_client": ["android", "web"],  # Try multiple clients
+            }
+        },
+        
+        # Additional options for better compatibility
+        "no_check_certificate": True,
+        "ignoreerrors": False,
+        "geo_bypass": True,
+        "geo_bypass_country": "US",
+    }
+    
+    # Add cookie support if specified
+    if use_cookies != "none":
+        try:
+            ydl_opts["cookiesfrombrowser"] = (use_cookies, None, None, None)
+        except Exception:
+            # If browser cookies fail, continue without them
+            pass
+    
+    # Add cookie file if provided
+    if cookie_file and os.path.exists(cookie_file):
+        ydl_opts["cookiefile"] = cookie_file
+    
+    return ydl_opts
+def get_video_formats(video_id: str, use_cookies: str = "none", cookie_file: str = None) -> list[dict]:
+    """
+    Get available video formats for download using yt_dlp.
+    Returns a list of format dictionaries with enhanced 403 error handling.
+    
+    Args:
+        video_id: YouTube video ID  
+        use_cookies: Browser to extract cookies from ("none", "chrome", "firefox", etc.)
+        cookie_file: Path to cookie file (optional)
+    """
+    # Primary attempt with enhanced configuration
     try:
-        ydl_opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "socket_timeout": 30,
-            "retries": 3,
-            # Enhanced user agent and headers for better compatibility
-            "user_agent": selected_user_agent,
-            "http_headers": {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Accept-Encoding": "gzip, deflate",
-                "DNT": "1",
-                "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1",
-            },
-            "extractor_args": {
-                "youtube": {
-                    "skip": ["hls", "dash"],  # Skip potentially restricted formats
-                    "player_skip": ["configs"],  # Skip some player configurations
-                }
-            },
-        }
+        ydl_opts = create_enhanced_ydl_opts(video_id, use_cookies, cookie_file, "best")
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
             
@@ -589,10 +663,17 @@ def get_video_formats(video_id: str) -> list[dict]:
         return []
 
 
-def download_video(video_id: str, format_id: str, output_path: str = "/tmp") -> str:
+def download_video(video_id: str, format_id: str, output_path: str = "/tmp", use_cookies: str = "none", cookie_file: str = None) -> str:
     """
     Download video using yt_dlp with specified format.
     Returns the path to the downloaded file or empty string if failed.
+    
+    Args:
+        video_id: YouTube video ID
+        format_id: Format ID to download
+        output_path: Output directory path
+        use_cookies: Browser to extract cookies from ("none", "chrome", "firefox", etc.)
+        cookie_file: Path to cookie file (optional)
     """
     try:
         # Ensure output directory exists
@@ -625,44 +706,13 @@ def download_video(video_id: str, format_id: str, output_path: str = "/tmp") -> 
             if not clean_title:  # Fallback if title becomes empty
                 clean_title = f"video_{video_id[:8]}"
         
-        # Use a more specific output template with safe characters
+        # Use enhanced ydl options with cookie support  
         safe_title = re.sub(r'[<>:"/\\|?*]', '_', clean_title)
-        output_template = os.path.join(output_path, f"{safe_title}_%(height)sp.%(ext)s")
+        output_template = os.path.join(output_path, f"{safe_title}_%(format_id)s.%(ext)s")
         
-        # Enhanced download configuration with better 403 error mitigation
-        user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        ]
-        
-        import random
-        selected_user_agent = random.choice(user_agents)
-        
-        ydl_opts = {
-            "format": format_id,
-            "outtmpl": output_template,
-            "quiet": True,
-            "no_warnings": True,
-            "socket_timeout": 30,
-            "retries": 3,
-            # Enhanced options to help with 403 errors
-            "user_agent": selected_user_agent,
-            "http_headers": {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Accept-Encoding": "gzip, deflate",
-                "DNT": "1",
-                "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1",
-            },
-            "extractor_args": {
-                "youtube": {
-                    "skip": ["hls", "dash"],  # Skip potentially restricted formats
-                    "player_skip": ["configs"],  # Skip some player configurations
-                }
-            },
-        }
+        # Primary download attempt with enhanced configuration
+        ydl_opts = create_enhanced_ydl_opts(video_id, use_cookies, cookie_file, format_id)
+        ydl_opts["outtmpl"] = output_template
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
@@ -672,49 +722,44 @@ def download_video(video_id: str, format_id: str, output_path: str = "/tmp") -> 
                 if "403" in str(e) or "Forbidden" in str(e):
                     st.warning("⚠️ Initial download failed with 403 error. Trying alternative configuration...")
                     
-                    # Enhanced fallback configuration with multiple strategies
-                    fallback_strategies = [
-                        {
-                            "name": "Lower quality with different user agent",
-                            "opts": {
-                                "format": "best[height<=720]",  # Try lower quality
-                                "outtmpl": output_template,
-                                "quiet": True,
-                                "no_warnings": True,
-                                "socket_timeout": 60,  # Longer timeout
-                                "retries": 5,  # More retries
-                                "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-                                "http_headers": {
-                                    "Accept": "*/*",
-                                    "Accept-Language": "en-US,en;q=0.9",
-                                },
-                                "extractor_args": {
-                                    "youtube": {
-                                        "skip": ["hls", "dash", "livestream"],
-                                        "player_skip": ["js", "configs"]  # Skip JavaScript player
-                                    }
-                                },
-                            }
-                        },
-                        {
-                            "name": "Most basic configuration",
-                            "opts": {
-                                "format": "worst",  # Try lowest quality available
-                                "outtmpl": output_template,
-                                "quiet": True,
-                                "no_warnings": True,
-                                "socket_timeout": 90,
-                                "retries": 3,
-                                "user_agent": "Mozilla/5.0 (compatible; yt-dlp)",
-                                "extractor_args": {
-                                    "youtube": {
-                                        "skip": ["hls", "dash", "livestream"],
-                                        "player_skip": ["js", "configs", "webpage"]
-                                    }
-                                },
-                            }
-                        }
-                    ]
+                    # Enhanced fallback configuration with multiple strategies including cookie variations
+                    fallback_strategies = []
+                    
+                    # Strategy 1: Different browser cookies if current approach fails
+                    if use_cookies != "none":
+                        alternative_browser = "firefox" if use_cookies == "chrome" else "chrome"
+                        fallback_strategies.append({
+                            "name": f"Alternative browser cookies ({alternative_browser})",
+                            "opts": create_enhanced_ydl_opts(video_id, alternative_browser, cookie_file, format_id)
+                        })
+                    else:
+                        # If no cookies were used, try with chrome cookies
+                        fallback_strategies.append({
+                            "name": "Chrome browser cookies",
+                            "opts": create_enhanced_ydl_opts(video_id, "chrome", cookie_file, format_id)
+                        })
+                    
+                    # Strategy 2: Lower quality with enhanced mobile simulation
+                    mobile_opts = create_enhanced_ydl_opts(video_id, "none", cookie_file, "best[height<=720]")
+                    mobile_opts["user_agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1"
+                    mobile_opts["extractor_args"]["youtube"]["player_client"] = ["ios", "android"]
+                    mobile_opts["outtmpl"] = output_template
+                    fallback_strategies.append({
+                        "name": "Mobile simulation with lower quality",
+                        "opts": mobile_opts
+                    })
+                    
+                    # Strategy 3: Most aggressive bypassing
+                    aggressive_opts = create_enhanced_ydl_opts(video_id, "none", cookie_file, "worst")
+                    aggressive_opts["extractor_args"]["youtube"]["skip"] = ["hls", "dash", "livestream"]
+                    aggressive_opts["extractor_args"]["youtube"]["player_skip"] = ["js", "configs", "webpage"]
+                    aggressive_opts["extractor_args"]["youtube"]["player_client"] = ["android", "ios", "mweb"]
+                    aggressive_opts["socket_timeout"] = 90
+                    aggressive_opts["outtmpl"] = output_template
+                    fallback_strategies.append({
+                        "name": "Aggressive bypass mode",
+                        "opts": aggressive_opts
+                    })
                     
                     download_succeeded = False
                     for i, strategy in enumerate(fallback_strategies):
@@ -761,12 +806,19 @@ def download_video(video_id: str, format_id: str, output_path: str = "/tmp") -> 
             st.error("• Temporarily unavailable")
             st.error("• Protected by enhanced bot detection")
             st.error("💡 Enhanced troubleshooting:")
+            
+            if use_cookies == "none":
+                st.error("• **Try enabling browser cookies in the options above** - This often resolves 403 errors")
+                st.error("• Choose the browser where the video plays normally (Chrome, Firefox, etc.)")
+            else:
+                st.error(f"• Current cookies from {use_cookies} may be expired - try a different browser")
+                st.error("• Sign into YouTube in your browser and try again")
+            
             st.error("• Try selecting a different video format/quality")
             st.error("• Check if the video plays normally in your browser")
             st.error("• Verify the video is publicly accessible")
             st.error("• Try again later as restrictions may be temporary")
             st.error("• Some livestreams and premieres have download restrictions")
-            st.error("• Consider using a different video URL format")
         else:
             st.error(f"Download error: {error_msg}")
         return ""
@@ -940,6 +992,30 @@ def video_download_page():
     st.title("YouTube Video Downloader 📥")
     st.write("Download YouTube videos in various qualities and formats.")
     
+    # Enhanced options section
+    with st.expander("🔧 Advanced Download Options", expanded=False):
+        st.markdown("**Cookie Authentication (helps bypass 403 errors):**")
+        
+        cookie_option = st.selectbox(
+            "Use browser cookies from:",
+            options=get_cookie_options(),
+            index=0,
+            help="Select a browser to extract cookies from. This helps bypass YouTube's bot detection. Choose the browser where you can normally watch the video."
+        )
+        
+        cookie_file = st.file_uploader(
+            "Or upload cookie file (optional):",
+            type=['txt'],
+            help="Upload a Netscape format cookie file exported from your browser"
+        )
+        
+        if cookie_option != "none":
+            st.info(f"ℹ️ Using cookies from {cookie_option}. Make sure you're signed into YouTube in that browser.")
+        elif cookie_file:
+            st.info("ℹ️ Using uploaded cookie file.")
+        else:
+            st.warning("⚠️ No cookies selected. This may cause 403 errors for restricted videos. Consider enabling browser cookies above.")
+    
     # URL input form
     with st.form(key="download_form", clear_on_submit=False):
         url_input = st.text_input(
@@ -954,9 +1030,24 @@ def video_download_page():
         st.session_state.download_video_id = get_video_id(st.session_state.download_url)
         st.session_state.download_submitted = True
         
-        # Fetch available formats
+        # Save cookie file if uploaded
+        cookie_file_path = None
+        if cookie_file:
+            cookie_file_path = f"/tmp/{cookie_file.name}"
+            with open(cookie_file_path, "wb") as f:
+                f.write(cookie_file.read())
+            st.success(f"✅ Cookie file uploaded: {cookie_file.name}")
+        
+        # Fetch available formats with cookie support
         with st.spinner("Fetching available video formats..."):
-            st.session_state.download_formats = get_video_formats(st.session_state.download_video_id)
+            st.session_state.download_formats = get_video_formats(
+                st.session_state.download_video_id, 
+                cookie_option, 
+                cookie_file_path
+            )
+            # Store cookie settings for download
+            st.session_state.download_cookie_option = cookie_option
+            st.session_state.download_cookie_file = cookie_file_path
     
     # Display formats and download options
     if st.session_state.download_submitted and st.session_state.download_formats:
@@ -985,7 +1076,10 @@ def video_download_page():
             with st.spinner("Downloading video... This may take a few minutes."):
                 download_path = download_video(
                     st.session_state.download_video_id, 
-                    selected_format_id
+                    selected_format_id,
+                    "/tmp",
+                    st.session_state.get("download_cookie_option", "none"),
+                    st.session_state.get("download_cookie_file", None)
                 )
                 
                 if download_path:
@@ -1071,9 +1165,19 @@ def video_download_page():
         - Make sure you have permission to download the content
         
         **Troubleshooting 403 Errors:**
-        - Some videos may be age-restricted or region-blocked
-        - The app automatically tries alternative configurations for restricted videos
-        - If download fails, try selecting a different format or check if the video is publicly accessible
+        - **Enable browser cookies** in the Advanced Options above - this is the most effective solution
+        - Choose the browser where you can normally watch the video (Chrome, Firefox, etc.)
+        - Make sure you're signed into YouTube in that browser
+        - For age-restricted videos, browser cookies are usually required
+        - Try different video formats if one doesn't work
+        - Some videos may be region-blocked or have restricted access
+        - The app automatically tries multiple fallback strategies
+        
+        **Cookie Setup Guide:**
+        1. Select your browser from the dropdown in Advanced Options
+        2. Make sure you're signed into YouTube in that browser
+        3. The app will automatically extract cookies to bypass restrictions
+        4. Alternatively, you can export cookies manually and upload the file
         """)
 
 
