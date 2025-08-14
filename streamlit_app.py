@@ -317,6 +317,13 @@ def get_video_formats(video_id: str) -> list[dict]:
             "quiet": True,
             "no_warnings": True,
             "socket_timeout": 30,
+            # Enhanced options to help with 403 errors when getting formats
+            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "extractor_args": {
+                "youtube": {
+                    "skip": ["hls", "dash"]
+                }
+            },
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
@@ -396,7 +403,16 @@ def get_video_formats(video_id: str) -> list[dict]:
             
             return formats
     except yt_dlp.utils.DownloadError as e:
-        st.error(f"❌ Error fetching video formats: {str(e)}")
+        error_msg = str(e)
+        if "403" in error_msg or "Forbidden" in error_msg:
+            st.error("❌ Error fetching video formats: HTTP Error 403: Forbidden")
+            st.error("🔒 This video may be:")
+            st.error("• Age-restricted or region-blocked")
+            st.error("• Private or requires authentication")
+            st.error("• Temporarily unavailable")
+            st.error("💡 Please try a different video or check if this video is publicly accessible.")
+        else:
+            st.error(f"❌ Error fetching video formats: {error_msg}")
         return []
     except Exception as e:
         st.error(f"❌ Unexpected error getting video formats: {str(e)}")
@@ -450,10 +466,45 @@ def download_video(video_id: str, format_id: str, output_path: str = "/tmp") -> 
             "no_warnings": True,
             "socket_timeout": 30,
             "retries": 3,
+            # Enhanced options to help with 403 errors
+            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "extractor_args": {
+                "youtube": {
+                    "skip": ["hls", "dash"]  # Skip potentially restricted formats
+                }
+            },
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+            try:
+                ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+            except yt_dlp.utils.DownloadError as e:
+                # If we get a 403 error, try with a more basic configuration
+                if "403" in str(e) or "Forbidden" in str(e):
+                    st.warning("⚠️ Initial download failed with 403 error. Trying alternative configuration...")
+                    
+                    # Retry with more basic options that may bypass restrictions
+                    fallback_opts = {
+                        "format": "best[height<=720]",  # Try lower quality
+                        "outtmpl": output_template,
+                        "quiet": True,
+                        "no_warnings": True,
+                        "socket_timeout": 60,  # Longer timeout
+                        "retries": 5,  # More retries
+                        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+                        "extractor_args": {
+                            "youtube": {
+                                "skip": ["hls", "dash"],
+                                "player_skip": ["js"]  # Skip JavaScript player
+                            }
+                        },
+                    }
+                    
+                    with yt_dlp.YoutubeDL(fallback_opts) as ydl_fallback:
+                        ydl_fallback.download([f"https://www.youtube.com/watch?v={video_id}"])
+                        st.info("✅ Download succeeded with alternative configuration")
+                else:
+                    raise  # Re-raise if not a 403 error
             
             # Find the downloaded file using safer pattern matching
             pattern = os.path.join(output_path, f"{safe_title}_*.*")
@@ -472,7 +523,19 @@ def download_video(video_id: str, format_id: str, output_path: str = "/tmp") -> 
                 
         return ""
     except yt_dlp.utils.DownloadError as e:
-        st.error(f"Download error: {str(e)}")
+        error_msg = str(e)
+        if "403" in error_msg or "Forbidden" in error_msg:
+            st.error("❌ Download error: HTTP Error 403: Forbidden")
+            st.error("🔒 This video may be:")
+            st.error("• Age-restricted or region-blocked")
+            st.error("• Private or requires authentication")  
+            st.error("• Temporarily unavailable")
+            st.error("💡 Try:")
+            st.error("• Selecting a different video format/quality")
+            st.error("• Checking if the video is publicly accessible")
+            st.error("• Trying again later")
+        else:
+            st.error(f"Download error: {error_msg}")
         return ""
     except PermissionError:
         st.error("❌ Permission denied. Unable to write to download directory.")
