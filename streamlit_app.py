@@ -345,7 +345,7 @@ def get_video_formats(video_id: str) -> list[dict]:
                     format_note = fmt.get("format_note", "")
                     tbr = fmt.get("tbr", 0)  # Total bitrate
                     
-                    if height and height not in seen_formats:
+                    if height is not None and height not in seen_formats:
                         seen_formats.add(height)
                         size_mb = f" (~{filesize // (1024*1024)} MB)" if filesize else ""
                         if not filesize and tbr and duration:
@@ -362,13 +362,19 @@ def get_video_formats(video_id: str) -> list[dict]:
                             "tbr": tbr
                         })
             
-            # Sort by quality (height) descending
-            formats.sort(key=lambda x: x["height"], reverse=True)
+            # Sort by quality (height) descending - handle None values
+            formats.sort(key=lambda x: x["height"] if x["height"] is not None else 0, reverse=True)
             
             # Add audio-only option
             audio_formats = [fmt for fmt in info.get("formats", []) if fmt.get("vcodec") == "none" and fmt.get("acodec") != "none"]
             if audio_formats:
-                best_audio = max(audio_formats, key=lambda x: x.get("abr", 0))
+                # Filter out formats with None abr values before finding the best one
+                valid_audio_formats = [fmt for fmt in audio_formats if fmt.get("abr") is not None]
+                if valid_audio_formats:
+                    best_audio = max(valid_audio_formats, key=lambda x: x.get("abr", 0))
+                else:
+                    # Fallback to first audio format if no valid abr values
+                    best_audio = audio_formats[0]
                 filesize = best_audio.get("filesize")
                 size_mb = f" (~{filesize // (1024*1024)} MB)" if filesize else ""
                 formats.append({
