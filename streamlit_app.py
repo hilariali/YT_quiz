@@ -836,6 +836,11 @@ def video_download_page():
         - Larger files (higher quality) take longer to download
         - Files are temporarily stored and automatically cleaned up
         - Make sure you have permission to download the content
+        
+        **Troubleshooting 403 Errors:**
+        - Some videos may be age-restricted or region-blocked
+        - The app automatically tries alternative configurations for restricted videos
+        - If download fails, try selecting a different format or check if the video is publicly accessible
         """)
 
 
