@@ -50,10 +50,12 @@ A Streamlit app that takes a YouTube video URL, fetches its transcript, summariz
 The video downloader functionality has been significantly enhanced with:
 
 - **Robust Error Handling**: Comprehensive error catching for network, permission, and disk space issues
+- **HTTP 403 Error Mitigation**: Specific handling for age-restricted and region-blocked videos with automatic fallback retry
+- **Enhanced yt-dlp Configuration**: User agent spoofing and format skipping to bypass restrictions  
 - **Memory Management**: Smart file size handling to prevent memory issues with large videos
 - **Cross-Platform Support**: Proper file path sanitization and directory creation
-- **Timeout & Retry Logic**: 30-second timeouts and 3-retry attempts for reliability  
-- **User Feedback**: Clear progress indicators and helpful error messages
+- **Timeout & Retry Logic**: 30-second timeouts and 3-retry attempts for reliability with fallback to extended timeouts
+- **User Feedback**: Clear progress indicators and helpful error messages with actionable guidance
 - **File Validation**: Size estimation and format validation before download
 - **Safe Cleanup**: Proper temporary file management
 
