@@ -64,12 +64,57 @@ for key, val in defaults.items():
 def get_video_id(url: str) -> str:
     """
     Extract YouTube video ID from URL or return input if already an ID.
+    Supports all YouTube URL formats including live, shorts, embed, and mobile URLs.
     """
-    if "v=" in url:
-        return url.split("v=")[1].split("&")[0]
-    if "youtu.be/" in url:
-        return url.split("youtu.be/")[1].split("?")[0]
-    return url.strip()
+    import re
+    
+    # Clean up the input
+    url = url.strip()
+    
+    # If it's already a video ID (11 characters, alphanumeric + - _), return it
+    if re.match(r'^[a-zA-Z0-9_-]{11}$', url):
+        return url
+    
+    # YouTube video ID regex patterns for different URL formats
+    patterns = [
+        # Standard watch URLs: youtube.com/watch?v=VIDEO_ID
+        r'(?:youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})',
+        
+        # Short URLs: youtu.be/VIDEO_ID
+        r'(?:youtu\.be/)([a-zA-Z0-9_-]{11})',
+        
+        # Live URLs: youtube.com/live/VIDEO_ID
+        r'(?:youtube\.com/live/)([a-zA-Z0-9_-]{11})',
+        
+        # Embed URLs: youtube.com/embed/VIDEO_ID
+        r'(?:youtube\.com/embed/)([a-zA-Z0-9_-]{11})',
+        
+        # Shorts URLs: youtube.com/shorts/VIDEO_ID
+        r'(?:youtube\.com/shorts/)([a-zA-Z0-9_-]{11})',
+        
+        # Mobile URLs: m.youtube.com/watch?v=VIDEO_ID
+        r'(?:m\.youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})',
+        
+        # Gaming URLs: gaming.youtube.com/watch?v=VIDEO_ID
+        r'(?:gaming\.youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})',
+    ]
+    
+    # Try each pattern
+    for pattern in patterns:
+        match = re.search(pattern, url, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    
+    # If no pattern matches and it looks like a YouTube URL, try fallback extraction
+    if 'youtube.com' in url.lower() or 'youtu.be' in url.lower():
+        # Last resort: look for any 11-character alphanumeric sequence that could be a video ID
+        fallback_match = re.search(r'([a-zA-Z0-9_-]{11})', url)
+        if fallback_match:
+            return fallback_match.group(1)
+    
+    # If nothing else works, return the original input stripped
+    # This maintains backward compatibility
+    return url
 
 
 def parse_proxies(proxy_input: str) -> list[str]:
@@ -310,18 +355,41 @@ def modify_quiz(existing_quiz: str, instructions: str, lang: str) -> str:
 def get_video_formats(video_id: str) -> list[dict]:
     """
     Get available video formats for download using yt_dlp.
-    Returns a list of format dictionaries.
+    Returns a list of format dictionaries with enhanced 403 error handling.
     """
+    # List of user agents to rotate through for better success rate
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+    ]
+    
+    import random
+    selected_user_agent = random.choice(user_agents)
+    
+    # Primary configuration with enhanced 403 error mitigation
     try:
         ydl_opts = {
             "quiet": True,
             "no_warnings": True,
             "socket_timeout": 30,
-            # Enhanced options to help with 403 errors when getting formats
-            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "retries": 3,
+            # Enhanced user agent and headers for better compatibility
+            "user_agent": selected_user_agent,
+            "http_headers": {
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Accept-Encoding": "gzip, deflate",
+                "DNT": "1",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+            },
             "extractor_args": {
                 "youtube": {
-                    "skip": ["hls", "dash"]
+                    "skip": ["hls", "dash"],  # Skip potentially restricted formats
+                    "player_skip": ["configs"],  # Skip some player configurations
                 }
             },
         }
@@ -405,12 +473,114 @@ def get_video_formats(video_id: str) -> list[dict]:
     except yt_dlp.utils.DownloadError as e:
         error_msg = str(e)
         if "403" in error_msg or "Forbidden" in error_msg:
+            # Try fallback strategy with different configuration
+            st.warning("⚠️ Initial request failed with 403 error. Trying alternative approach...")
+            
+            try:
+                # Fallback configuration with more conservative settings
+                fallback_opts = {
+                    "quiet": True,
+                    "no_warnings": True,
+                    "socket_timeout": 60,  # Longer timeout
+                    "retries": 5,  # More retries
+                    "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",  # Different user agent
+                    "http_headers": {
+                        "Accept": "*/*",
+                        "Accept-Language": "en-US,en;q=0.9",
+                    },
+                    "extractor_args": {
+                        "youtube": {
+                            "skip": ["hls", "dash", "livestream"],
+                            "player_skip": ["js", "configs"],  # Skip JavaScript player
+                        }
+                    },
+                }
+                
+                with yt_dlp.YoutubeDL(fallback_opts) as ydl:
+                    info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+                    
+                    if info:
+                        st.info("✅ Successfully retrieved video information with alternative configuration.")
+                        # Process formats using the same logic as above
+                        formats = []
+                        seen_formats = set()
+                        
+                        # Check if video is too long or has restrictions
+                        duration = info.get("duration", 0)
+                        if duration and duration > 7200:  # More than 2 hours
+                            st.warning(f"⚠️ Video is very long ({duration//60} minutes). Consider downloading smaller segments.")
+                        
+                        availability = info.get("availability")
+                        if availability and availability != "public":
+                            st.warning(f"⚠️ Video availability: {availability}. Download may fail.")
+                        
+                        for fmt in info.get("formats", []):
+                            if fmt.get("vcodec") != "none" and fmt.get("acodec") != "none":  # Video with audio
+                                height = fmt.get("height")
+                                ext = fmt.get("ext", "mp4")
+                                filesize = fmt.get("filesize")
+                                format_note = fmt.get("format_note", "")
+                                tbr = fmt.get("tbr", 0)  # Total bitrate
+                                
+                                if height is not None and height not in seen_formats:
+                                    seen_formats.add(height)
+                                    size_mb = f" (~{filesize // (1024*1024)} MB)" if filesize else ""
+                                    quality_desc = f"{height}p" if height else "Unknown quality"
+                                    if format_note:
+                                        quality_desc += f" ({format_note})"
+                                    
+                                    formats.append({
+                                        "format_id": fmt.get("format_id"),
+                                        "height": height,
+                                        "ext": ext,
+                                        "description": f"{quality_desc} (.{ext}){size_mb}",
+                                        "filesize": filesize,
+                                        "tbr": tbr
+                                    })
+                        
+                        # Add audio-only format
+                        audio_formats = [fmt for fmt in info.get("formats", []) if fmt.get("vcodec") == "none" and fmt.get("acodec") != "none"]
+                        if audio_formats:
+                            # Filter out formats with None abr values before finding the best one
+                            valid_audio_formats = [fmt for fmt in audio_formats if fmt.get("abr") is not None and isinstance(fmt.get("abr"), (int, float))]
+                            if valid_audio_formats:
+                                # Use safe comparison for abr values
+                                def safe_get_abr(fmt):
+                                    abr = fmt.get("abr", 0)
+                                    return abr if abr is not None and isinstance(abr, (int, float)) else 0
+                                
+                                best_audio = max(valid_audio_formats, key=safe_get_abr)
+                            else:
+                                # Fallback to first audio format if no valid abr values
+                                best_audio = audio_formats[0]
+                            filesize = best_audio.get("filesize")
+                            size_mb = f" (~{filesize // (1024*1024)} MB)" if filesize else ""
+                            formats.append({
+                                "format_id": best_audio.get("format_id"),
+                                "height": 0,  # Use 0 for audio
+                                "ext": best_audio.get("ext", "m4a"),
+                                "description": f"Audio Only (.{best_audio.get('ext', 'm4a')}){size_mb}",
+                                "filesize": filesize,
+                                "tbr": best_audio.get("abr", 0)
+                            })
+                        
+                        return formats
+                    
+            except Exception as fallback_error:
+                st.error(f"❌ Fallback attempt also failed: {str(fallback_error)}")
+            
+            # If fallback fails, show enhanced error information
             st.error("❌ Error fetching video formats: HTTP Error 403: Forbidden")
             st.error("🔒 This video may be:")
             st.error("• Age-restricted or region-blocked")
             st.error("• Private or requires authentication")
             st.error("• Temporarily unavailable")
-            st.error("💡 Please try a different video or check if this video is publicly accessible.")
+            st.error("• Protected by enhanced bot detection")
+            st.error("💡 Troubleshooting tips:")
+            st.error("• Try a different video that's publicly accessible")
+            st.error("• Check if the video plays normally in your browser")
+            st.error("• Some livestreams and premieres may have restrictions")
+            st.error("• Very new videos might need time before download is available")
         else:
             st.error(f"❌ Error fetching video formats: {error_msg}")
         return []
@@ -459,6 +629,16 @@ def download_video(video_id: str, format_id: str, output_path: str = "/tmp") -> 
         safe_title = re.sub(r'[<>:"/\\|?*]', '_', clean_title)
         output_template = os.path.join(output_path, f"{safe_title}_%(height)sp.%(ext)s")
         
+        # Enhanced download configuration with better 403 error mitigation
+        user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        ]
+        
+        import random
+        selected_user_agent = random.choice(user_agents)
+        
         ydl_opts = {
             "format": format_id,
             "outtmpl": output_template,
@@ -467,10 +647,19 @@ def download_video(video_id: str, format_id: str, output_path: str = "/tmp") -> 
             "socket_timeout": 30,
             "retries": 3,
             # Enhanced options to help with 403 errors
-            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "user_agent": selected_user_agent,
+            "http_headers": {
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Accept-Encoding": "gzip, deflate",
+                "DNT": "1",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+            },
             "extractor_args": {
                 "youtube": {
-                    "skip": ["hls", "dash"]  # Skip potentially restricted formats
+                    "skip": ["hls", "dash"],  # Skip potentially restricted formats
+                    "player_skip": ["configs"],  # Skip some player configurations
                 }
             },
         }
@@ -483,26 +672,66 @@ def download_video(video_id: str, format_id: str, output_path: str = "/tmp") -> 
                 if "403" in str(e) or "Forbidden" in str(e):
                     st.warning("⚠️ Initial download failed with 403 error. Trying alternative configuration...")
                     
-                    # Retry with more basic options that may bypass restrictions
-                    fallback_opts = {
-                        "format": "best[height<=720]",  # Try lower quality
-                        "outtmpl": output_template,
-                        "quiet": True,
-                        "no_warnings": True,
-                        "socket_timeout": 60,  # Longer timeout
-                        "retries": 5,  # More retries
-                        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-                        "extractor_args": {
-                            "youtube": {
-                                "skip": ["hls", "dash"],
-                                "player_skip": ["js"]  # Skip JavaScript player
+                    # Enhanced fallback configuration with multiple strategies
+                    fallback_strategies = [
+                        {
+                            "name": "Lower quality with different user agent",
+                            "opts": {
+                                "format": "best[height<=720]",  # Try lower quality
+                                "outtmpl": output_template,
+                                "quiet": True,
+                                "no_warnings": True,
+                                "socket_timeout": 60,  # Longer timeout
+                                "retries": 5,  # More retries
+                                "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+                                "http_headers": {
+                                    "Accept": "*/*",
+                                    "Accept-Language": "en-US,en;q=0.9",
+                                },
+                                "extractor_args": {
+                                    "youtube": {
+                                        "skip": ["hls", "dash", "livestream"],
+                                        "player_skip": ["js", "configs"]  # Skip JavaScript player
+                                    }
+                                },
                             }
                         },
-                    }
+                        {
+                            "name": "Most basic configuration",
+                            "opts": {
+                                "format": "worst",  # Try lowest quality available
+                                "outtmpl": output_template,
+                                "quiet": True,
+                                "no_warnings": True,
+                                "socket_timeout": 90,
+                                "retries": 3,
+                                "user_agent": "Mozilla/5.0 (compatible; yt-dlp)",
+                                "extractor_args": {
+                                    "youtube": {
+                                        "skip": ["hls", "dash", "livestream"],
+                                        "player_skip": ["js", "configs", "webpage"]
+                                    }
+                                },
+                            }
+                        }
+                    ]
                     
-                    with yt_dlp.YoutubeDL(fallback_opts) as ydl_fallback:
-                        ydl_fallback.download([f"https://www.youtube.com/watch?v={video_id}"])
-                        st.info("✅ Download succeeded with alternative configuration")
+                    download_succeeded = False
+                    for i, strategy in enumerate(fallback_strategies):
+                        try:
+                            st.info(f"🔄 Trying strategy {i+1}: {strategy['name']}...")
+                            with yt_dlp.YoutubeDL(strategy["opts"]) as ydl_fallback:
+                                ydl_fallback.download([f"https://www.youtube.com/watch?v={video_id}"])
+                                st.success(f"✅ Download succeeded with {strategy['name']}")
+                                download_succeeded = True
+                                break
+                        except Exception as fallback_error:
+                            st.warning(f"⚠️ Strategy {i+1} failed: {str(fallback_error)[:100]}...")
+                            continue
+                    
+                    if not download_succeeded:
+                        st.error("❌ All fallback strategies failed")
+                        raise  # Re-raise the original error
                 else:
                     raise  # Re-raise if not a 403 error
             
@@ -530,10 +759,14 @@ def download_video(video_id: str, format_id: str, output_path: str = "/tmp") -> 
             st.error("• Age-restricted or region-blocked")
             st.error("• Private or requires authentication")  
             st.error("• Temporarily unavailable")
-            st.error("💡 Try:")
-            st.error("• Selecting a different video format/quality")
-            st.error("• Checking if the video is publicly accessible")
-            st.error("• Trying again later")
+            st.error("• Protected by enhanced bot detection")
+            st.error("💡 Enhanced troubleshooting:")
+            st.error("• Try selecting a different video format/quality")
+            st.error("• Check if the video plays normally in your browser")
+            st.error("• Verify the video is publicly accessible")
+            st.error("• Try again later as restrictions may be temporary")
+            st.error("• Some livestreams and premieres have download restrictions")
+            st.error("• Consider using a different video URL format")
         else:
             st.error(f"Download error: {error_msg}")
         return ""
