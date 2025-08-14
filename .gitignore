@@ -1,0 +1,8 @@
+# Streamlit secrets and test files
+.streamlit/secrets.toml
+# Python cache
+__pycache__/
+*.pyc
+# Test outputs
+/tmp/
+*.log

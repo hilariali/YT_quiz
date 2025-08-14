@@ -2,6 +2,23 @@
 
 A Streamlit app that takes a YouTube video URL, fetches its transcript, summarizes it via OpenAI, and generates a multiple-choice quiz.
 
+## Features
+
+### Quiz Generator 📚
+- Extract transcripts from YouTube videos
+- Generate AI-powered summaries 
+- Create customizable multiple-choice quizzes
+- Support for multiple languages
+- Proxy support for restricted regions
+
+### Video Downloader 📥 
+- Download YouTube videos in various qualities
+- Support for audio-only downloads
+- Multiple format options (MP4, WebM, etc.)
+- Robust error handling and user feedback
+- Safe handling of large files
+- Cross-platform compatibility
+
 ## Setup
 
 1. **Clone the repo**
@@ -27,3 +44,22 @@ A Streamlit app that takes a YouTube video URL, fetches its transcript, summariz
    ```bash
    streamlit run streamlit_app.py
    ```
+
+## Recent Improvements (Video Downloader)
+
+The video downloader functionality has been significantly enhanced with:
+
+- **Robust Error Handling**: Comprehensive error catching for network, permission, and disk space issues
+- **Memory Management**: Smart file size handling to prevent memory issues with large videos
+- **Cross-Platform Support**: Proper file path sanitization and directory creation
+- **Timeout & Retry Logic**: 30-second timeouts and 3-retry attempts for reliability  
+- **User Feedback**: Clear progress indicators and helpful error messages
+- **File Validation**: Size estimation and format validation before download
+- **Safe Cleanup**: Proper temporary file management
+
+### Testing
+
+Run the validation tests:
+```bash
+python test_download_fixes.py
+```
