@@ -6,3 +6,6 @@ __pycache__/
 # Test outputs
 /tmp/
 *.log
+# Development test files (temporary)
+test_*url*.py
+test_improvements.py
