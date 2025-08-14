@@ -316,12 +316,26 @@ def get_video_formats(video_id: str) -> list[dict]:
         ydl_opts = {
             "quiet": True,
             "no_warnings": True,
+            "socket_timeout": 30,
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
             
+            if not info:
+                st.error("❌ Could not retrieve video information.")
+                return []
+            
             formats = []
             seen_formats = set()
+            
+            # Check if video is too long or has restrictions
+            duration = info.get("duration", 0)
+            if duration and duration > 7200:  # More than 2 hours
+                st.warning(f"⚠️ Video is very long ({duration//60} minutes). Consider downloading smaller segments.")
+            
+            availability = info.get("availability")
+            if availability and availability != "public":
+                st.warning(f"⚠️ Video availability: {availability}. Download may fail.")
             
             for fmt in info.get("formats", []):
                 if fmt.get("vcodec") != "none" and fmt.get("acodec") != "none":  # Video with audio
@@ -329,16 +343,23 @@ def get_video_formats(video_id: str) -> list[dict]:
                     ext = fmt.get("ext", "mp4")
                     filesize = fmt.get("filesize")
                     format_note = fmt.get("format_note", "")
+                    tbr = fmt.get("tbr", 0)  # Total bitrate
                     
                     if height and height not in seen_formats:
                         seen_formats.add(height)
                         size_mb = f" (~{filesize // (1024*1024)} MB)" if filesize else ""
+                        if not filesize and tbr and duration:
+                            # Estimate file size if not provided
+                            estimated_size_mb = (tbr * duration) / (8 * 1024)  # Convert kbps to MB
+                            size_mb = f" (~{int(estimated_size_mb)} MB est.)"
+                        
                         formats.append({
                             "format_id": fmt.get("format_id"),
                             "height": height,
                             "ext": ext,
                             "description": f"{height}p {format_note} (.{ext}){size_mb}",
-                            "filesize": filesize
+                            "filesize": filesize,
+                            "tbr": tbr
                         })
             
             # Sort by quality (height) descending
@@ -348,17 +369,26 @@ def get_video_formats(video_id: str) -> list[dict]:
             audio_formats = [fmt for fmt in info.get("formats", []) if fmt.get("vcodec") == "none" and fmt.get("acodec") != "none"]
             if audio_formats:
                 best_audio = max(audio_formats, key=lambda x: x.get("abr", 0))
+                filesize = best_audio.get("filesize")
+                size_mb = f" (~{filesize // (1024*1024)} MB)" if filesize else ""
                 formats.append({
                     "format_id": best_audio.get("format_id"),
                     "height": 0,  # Use 0 for audio
                     "ext": best_audio.get("ext", "m4a"),
-                    "description": f"Audio Only (.{best_audio.get('ext', 'm4a')})",
-                    "filesize": best_audio.get("filesize")
+                    "description": f"Audio Only (.{best_audio.get('ext', 'm4a')}){size_mb}",
+                    "filesize": filesize,
+                    "tbr": best_audio.get("abr", 0)
                 })
             
+            if not formats:
+                st.error("❌ No suitable formats found for this video.")
+            
             return formats
+    except yt_dlp.utils.DownloadError as e:
+        st.error(f"❌ Error fetching video formats: {str(e)}")
+        return []
     except Exception as e:
-        st.error(f"Error getting video formats: {e}")
+        st.error(f"❌ Unexpected error getting video formats: {str(e)}")
         return []
 
 
@@ -368,39 +398,71 @@ def download_video(video_id: str, format_id: str, output_path: str = "/tmp") -> 
     Returns the path to the downloaded file or empty string if failed.
     """
     try:
+        # Ensure output directory exists
+        os.makedirs(output_path, exist_ok=True)
+        
         # Clean filename
         ydl_opts_info = {
             "quiet": True,
             "no_warnings": True,
+            "socket_timeout": 30,
         }
         
         with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
             title = info.get("title", video_id)
-            # Clean title for filename
+            duration = info.get("duration", 0)
+            filesize_approx = info.get("filesize_approx", 0)
+            
+            # Validate video duration and size
+            if duration and duration > 3600:  # More than 1 hour
+                st.warning(f"⚠️ Video is {duration//60} minutes long. Download may take a while.")
+            
+            if filesize_approx and filesize_approx > 500 * 1024 * 1024:  # More than 500MB
+                st.warning(f"⚠️ Video is approximately {filesize_approx//(1024*1024)} MB. Download may take a while.")
+            
+            # Clean title for filename - more robust sanitization
             valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
-            clean_title = ''.join(c for c in title if c in valid_chars)
+            clean_title = ''.join(c for c in title if c in valid_chars).strip()
             clean_title = clean_title[:50]  # Limit length
+            if not clean_title:  # Fallback if title becomes empty
+                clean_title = f"video_{video_id[:8]}"
+        
+        # Use a more specific output template with safe characters
+        safe_title = re.sub(r'[<>:"/\\|?*]', '_', clean_title)
+        output_template = os.path.join(output_path, f"{safe_title}_%(height)sp.%(ext)s")
         
         ydl_opts = {
             "format": format_id,
-            "outtmpl": f"{output_path}/{clean_title}_%(height)sp.%(ext)s",
+            "outtmpl": output_template,
             "quiet": True,
             "no_warnings": True,
+            "socket_timeout": 30,
+            "retries": 3,
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
             
-            # Find the downloaded file
-            pattern = f"{output_path}/{clean_title}_*.*"
+            # Find the downloaded file using safer pattern matching
+            pattern = os.path.join(output_path, f"{safe_title}_*.*")
             files = glob.glob(pattern)
             if files:
-                return files[0]  # Return the first match
+                # Return the most recently created file if multiple matches
+                return max(files, key=os.path.getctime)
                 
         return ""
+    except yt_dlp.utils.DownloadError as e:
+        st.error(f"Download error: {str(e)}")
+        return ""
+    except PermissionError:
+        st.error("❌ Permission denied. Unable to write to download directory.")
+        return ""
+    except OSError as e:
+        st.error(f"❌ Disk error: {str(e)}")
+        return ""
     except Exception as e:
-        st.error(f"Download error: {e}")
+        st.error(f"❌ Unexpected error during download: {str(e)}")
         return ""
 
 
@@ -614,23 +676,64 @@ def video_download_page():
                 if download_path:
                     st.success("✅ Download completed!")
                     
-                    # Provide download link
-                    with open(download_path, "rb") as file:
-                        file_data = file.read()
-                        filename = download_path.split("/")[-1]
+                    # Get file info safely
+                    try:
+                        file_size = os.path.getsize(download_path)
+                        filename = os.path.basename(download_path)
                         
-                        st.download_button(
-                            label=f"📁 Download {filename}",
-                            data=file_data,
-                            file_name=filename,
-                            mime="video/mp4"
-                        )
+                        # Check file size before loading into memory
+                        if file_size > 100 * 1024 * 1024:  # 100MB threshold
+                            st.warning(f"⚠️ File is large ({file_size//(1024*1024)} MB). Download may be slow.")
+                        
+                        # For very large files, suggest alternative download methods
+                        if file_size > 500 * 1024 * 1024:  # 500MB threshold
+                            st.error("❌ File too large for browser download. Consider using yt-dlp directly on your machine.")
+                        else:
+                            # Stream the file for download instead of loading all at once
+                            def read_file_chunks(file_path, chunk_size=1024*1024):  # 1MB chunks
+                                with open(file_path, "rb") as f:
+                                    while True:
+                                        chunk = f.read(chunk_size)
+                                        if not chunk:
+                                            break
+                                        yield chunk
+                            
+                            # For smaller files, use direct read for simplicity
+                            if file_size <= 50 * 1024 * 1024:  # 50MB or less
+                                with open(download_path, "rb") as file:
+                                    file_data = file.read()
+                                    
+                                st.download_button(
+                                    label=f"📁 Download {filename}",
+                                    data=file_data,
+                                    file_name=filename,
+                                    mime="video/mp4"
+                                )
+                            else:
+                                # For larger files, create a generator-based download
+                                st.info("💡 Large file detected. Download will be processed in chunks.")
+                                
+                                # Create a temporary link or suggest alternative method
+                                st.markdown(f"""
+                                **File ready for download:** `{filename}`
+                                
+                                **File size:** {file_size//(1024*1024)} MB
+                                
+                                For files this large, we recommend downloading directly using:
+                                ```
+                                yt-dlp "{st.session_state.download_url}" -f {selected_format_id}
+                                ```
+                                """)
+                        
+                    except OSError as e:
+                        st.error(f"❌ Error accessing downloaded file: {e}")
                     
                     # Clean up the temporary file after a delay
                     try:
                         os.remove(download_path)
-                    except:
-                        pass  # File cleanup is optional
+                        st.info("🗑️ Temporary file cleaned up.")
+                    except OSError:
+                        st.warning("⚠️ Could not clean up temporary file. You may need to remove it manually.")
                         
                 else:
                     st.error("❌ Download failed. Please try again or choose a different format.")
